@@ -225,7 +225,7 @@ class GymAPITester:
         }
         
         result = self.test_api_endpoint("POST", "/payments", invalid_payment, 404)
-        if not result["success"]:
+        if result["success"]:
             self.log("Invalid member payment validation test passed")
         else:
             self.log("Invalid member payment validation failed", "ERROR")
