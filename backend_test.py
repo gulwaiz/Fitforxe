@@ -310,7 +310,7 @@ class GymAPITester:
         }
         
         result = self.test_api_endpoint("POST", "/attendance/checkin", invalid_checkin, 404)
-        if not result["success"]:
+        if result["success"]:
             self.log("Invalid member check-in validation test passed")
         else:
             self.log("Invalid member check-in validation failed", "ERROR")
