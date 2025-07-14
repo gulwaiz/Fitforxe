@@ -269,7 +269,7 @@ class GymAPITester:
         # Test 2: Test duplicate check-in prevention
         self.log("Testing duplicate check-in prevention...")
         result = self.test_api_endpoint("POST", "/attendance/checkin", checkin_data, 400)
-        if not result["success"]:
+        if result["success"]:
             self.log("Duplicate check-in prevention test passed")
         else:
             self.log("Duplicate check-in prevention failed", "ERROR")
