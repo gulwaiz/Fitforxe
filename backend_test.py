@@ -136,7 +136,7 @@ class GymAPITester:
         }
         
         result = self.test_api_endpoint("POST", "/members", duplicate_member, 400)
-        if not result["success"]:
+        if result["success"]:
             self.log("Duplicate email validation test passed")
         else:
             self.log("Duplicate email validation failed - should have returned 400", "ERROR")
