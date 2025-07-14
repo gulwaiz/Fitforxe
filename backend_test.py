@@ -297,7 +297,7 @@ class GymAPITester:
         # Test 5: Test check-out without check-in
         self.log("Testing check-out without active check-in...")
         result = self.test_api_endpoint("POST", f"/attendance/checkout/{self.test_member_id}", expected_status=404)
-        if not result["success"]:
+        if result["success"]:
             self.log("Check-out without check-in validation test passed")
         else:
             self.log("Check-out without check-in validation failed", "ERROR")
