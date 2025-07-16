@@ -63,6 +63,38 @@ class PaymentMethodType(str, Enum):
     CHECK = "check"
 
 # Models
+class GymOwnerProfile(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    gym_name: str = "FitForce"
+    owner_name: str
+    email: str
+    phone: str
+    address: str
+    city: str
+    state: str
+    zip_code: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class GymOwnerProfileCreate(BaseModel):
+    owner_name: str
+    email: str
+    phone: str
+    address: str
+    city: str
+    state: str
+    zip_code: str
+
+class GymOwnerProfileUpdate(BaseModel):
+    gym_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+
 class Member(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     first_name: str
@@ -77,6 +109,8 @@ class Member(BaseModel):
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     medical_conditions: Optional[str] = None
+    stripe_customer_id: Optional[str] = None
+    auto_billing_enabled: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -90,6 +124,7 @@ class MemberCreate(BaseModel):
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     medical_conditions: Optional[str] = None
+    enable_auto_billing: bool = False
 
 class MemberUpdate(BaseModel):
     first_name: Optional[str] = None
@@ -102,6 +137,7 @@ class MemberUpdate(BaseModel):
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     medical_conditions: Optional[str] = None
+    auto_billing_enabled: Optional[bool] = None
 
 class Payment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -122,6 +158,26 @@ class PaymentCreate(BaseModel):
     payment_method: str
     membership_type: MembershipType
     notes: Optional[str] = None
+
+class PaymentTransaction(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    member_id: str
+    session_id: Optional[str] = None
+    payment_id: Optional[str] = None
+    amount: float
+    currency: str = "usd"
+    payment_method: PaymentMethodType
+    status: PaymentTransactionStatus
+    membership_type: MembershipType
+    metadata: Optional[Dict[str, str]] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class StripeCheckoutRequest(BaseModel):
+    member_id: str
+    membership_type: MembershipType
+    success_url: str
+    cancel_url: str
 
 class Attendance(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
