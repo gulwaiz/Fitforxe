@@ -325,7 +325,165 @@ async def delete_member(member_id: str):
     await db.members.delete_one({"id": member_id})
     return {"message": "Member deleted successfully"}
 
-# Payment Routes
+# Stripe Payment Routes
+@api_router.post("/stripe/checkout", response_model=CheckoutSessionResponse)
+async def create_stripe_checkout(request: StripeCheckoutRequest):
+    if not stripe_api_key:
+        raise HTTPException(status_code=500, detail="Stripe is not configured")
+    
+    # Verify member exists
+    member = await db.members.find_one({"id": request.member_id})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    # Initialize Stripe checkout
+    host_url = request.success_url.split('/')[0] + '//' + request.success_url.split('/')[2]
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
+    
+    # Get pricing
+    amount = MEMBERSHIP_PRICING[request.membership_type]
+    
+    # Create checkout session
+    checkout_request = CheckoutSessionRequest(
+        amount=amount,
+        currency="usd",
+        success_url=request.success_url,
+        cancel_url=request.cancel_url,
+        metadata={
+            "member_id": request.member_id,
+            "membership_type": request.membership_type,
+            "gym_name": "FitForce"
+        }
+    )
+    
+    session = await stripe_checkout.create_checkout_session(checkout_request)
+    
+    # Create payment transaction record
+    payment_transaction = PaymentTransaction(
+        member_id=request.member_id,
+        session_id=session.session_id,
+        amount=amount,
+        currency="usd",
+        payment_method=PaymentMethodType.STRIPE,
+        status=PaymentTransactionStatus.INITIATED,
+        membership_type=request.membership_type,
+        metadata=checkout_request.metadata
+    )
+    
+    await db.payment_transactions.insert_one(payment_transaction.dict())
+    
+    return session
+
+@api_router.get("/stripe/checkout/status/{session_id}")
+async def get_stripe_checkout_status(session_id: str):
+    if not stripe_api_key:
+        raise HTTPException(status_code=500, detail="Stripe is not configured")
+    
+    # Initialize Stripe checkout
+    stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url="")
+    
+    # Get checkout status
+    status = await stripe_checkout.get_checkout_status(session_id)
+    
+    # Update payment transaction
+    payment_transaction = await db.payment_transactions.find_one({"session_id": session_id})
+    if payment_transaction:
+        if status.payment_status == "paid" and payment_transaction["status"] != PaymentTransactionStatus.COMPLETED:
+            # Update transaction status
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {
+                    "status": PaymentTransactionStatus.COMPLETED,
+                    "updated_at": datetime.utcnow()
+                }}
+            )
+            
+            # Create payment record
+            payment = Payment(
+                member_id=payment_transaction["member_id"],
+                amount=payment_transaction["amount"],
+                payment_date=datetime.utcnow(),
+                payment_method="stripe",
+                status=PaymentStatus.PAID,
+                membership_type=payment_transaction["membership_type"],
+                period_start=datetime.utcnow(),
+                period_end=calculate_membership_end_date(datetime.utcnow(), payment_transaction["membership_type"]),
+                notes="Stripe payment processed"
+            )
+            
+            await db.payments.insert_one(payment.dict())
+            
+            # Update member's membership end date
+            await db.members.update_one(
+                {"id": payment_transaction["member_id"]},
+                {"$set": {
+                    "membership_end_date": payment.period_end,
+                    "status": MemberStatus.ACTIVE,
+                    "auto_billing_enabled": True
+                }}
+            )
+    
+    return status
+
+@api_router.post("/webhook/stripe")
+async def handle_stripe_webhook(request: Request):
+    if not stripe_api_key:
+        raise HTTPException(status_code=500, detail="Stripe is not configured")
+    
+    # Initialize Stripe checkout
+    stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url="")
+    
+    # Get webhook data
+    webhook_body = await request.body()
+    stripe_signature = request.headers.get("Stripe-Signature")
+    
+    try:
+        webhook_response = await stripe_checkout.handle_webhook(webhook_body, stripe_signature)
+        
+        if webhook_response.event_type == "checkout.session.completed":
+            session_id = webhook_response.session_id
+            
+            # Update payment transaction
+            payment_transaction = await db.payment_transactions.find_one({"session_id": session_id})
+            if payment_transaction and payment_transaction["status"] != PaymentTransactionStatus.COMPLETED:
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id},
+                    {"$set": {
+                        "status": PaymentTransactionStatus.COMPLETED,
+                        "updated_at": datetime.utcnow()
+                    }}
+                )
+                
+                # Create payment record and update member (same logic as above)
+                payment = Payment(
+                    member_id=payment_transaction["member_id"],
+                    amount=payment_transaction["amount"],
+                    payment_date=datetime.utcnow(),
+                    payment_method="stripe",
+                    status=PaymentStatus.PAID,
+                    membership_type=payment_transaction["membership_type"],
+                    period_start=datetime.utcnow(),
+                    period_end=calculate_membership_end_date(datetime.utcnow(), payment_transaction["membership_type"]),
+                    notes="Stripe webhook processed"
+                )
+                
+                await db.payments.insert_one(payment.dict())
+                
+                await db.members.update_one(
+                    {"id": payment_transaction["member_id"]},
+                    {"$set": {
+                        "membership_end_date": payment.period_end,
+                        "status": MemberStatus.ACTIVE,
+                        "auto_billing_enabled": True
+                    }}
+                )
+        
+        return {"status": "success"}
+        
+    except Exception as e:
+        logging.error(f"Webhook error: {str(e)}")
+        raise HTTPException(status_code=400, detail="Webhook processing failed")
 @api_router.post("/payments", response_model=Payment)
 async def create_payment(payment_data: PaymentCreate):
     # Verify member exists
