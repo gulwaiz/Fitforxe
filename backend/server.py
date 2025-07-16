@@ -283,6 +283,10 @@ async def create_member(member_data: MemberCreate):
         "status": MemberStatus.ACTIVE
     })
     
+    # Remove enable_auto_billing from member_dict and set auto_billing_enabled
+    enable_auto_billing = member_dict.pop("enable_auto_billing", False)
+    member_dict["auto_billing_enabled"] = enable_auto_billing
+    
     member = Member(**member_dict)
     await db.members.insert_one(member.dict())
     return member
