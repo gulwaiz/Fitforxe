@@ -105,6 +105,66 @@
 user_problem_statement: "Build a gym management app for gym owners to track payments, attendance, member list, and etc"
 
 backend:
+  - task: "Gym Owner Profile Management APIs"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Implemented gym owner profile management with POST /api/profile (create/update), GET /api/profile (retrieve), and PUT /api/profile (update) endpoints with FitForce branding"
+      - working: true
+        agent: "testing"
+        comment: "PASSED - Gym Owner Profile APIs working correctly. Tested: default profile retrieval with FitForce branding, profile creation/update via POST with all required fields (owner_name, email, phone, address, city, state, zip_code), profile retrieval after updates, partial profile updates via PUT. Profile data persistence and UUID-based IDs working properly."
+
+  - task: "Stripe Payment Integration APIs"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Implemented Stripe payment integration with POST /api/stripe/checkout (create checkout session), GET /api/stripe/checkout/status/{session_id} (check payment status), and POST /api/webhook/stripe (handle webhooks) using emergentintegrations.payments.stripe"
+      - working: true
+        agent: "testing"
+        comment: "PASSED - Stripe Payment Integration APIs working correctly. Tested: checkout session creation with member validation and metadata, checkout status retrieval, webhook endpoint connectivity, invalid member validation (returns 404). Stripe sessions are properly created with test API key, payment transactions are recorded in database, and membership pricing integration works correctly."
+
+  - task: "Enhanced Member Management with Auto-Billing"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Enhanced member management to include auto_billing_enabled field, stripe_customer_id integration, and enable_auto_billing option in member creation"
+      - working: true
+        agent: "testing"
+        comment: "PASSED - Enhanced Member Management working correctly. Tested: member creation with enable_auto_billing=true sets auto_billing_enabled field, member creation with enable_auto_billing=false keeps auto_billing_enabled as false, all existing member CRUD operations still work, duplicate email validation, member updates. Auto-billing integration with Stripe customer management is properly implemented."
+
+  - task: "Payment Transaction System"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Implemented PaymentTransaction model and database integration for tracking Stripe payment sessions, statuses, and metadata with payment_transactions collection"
+      - working: true
+        agent: "testing"
+        comment: "PASSED - Payment Transaction System working correctly. Tested: payment transactions are automatically created when Stripe checkout sessions are initiated, transactions include session_id, member_id, amount, currency, payment_method, status, and metadata. Integration with existing payment system maintains data consistency."
+
   - task: "Member Management CRUD APIs"
     implemented: true
     working: true
