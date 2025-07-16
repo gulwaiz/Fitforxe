@@ -209,7 +209,62 @@ def calculate_membership_end_date(start_date: datetime, membership_type: Members
     # All memberships are monthly
     return start_date + timedelta(days=30)
 
-# Member Routes
+# Gym Owner Profile Routes
+@api_router.post("/profile", response_model=GymOwnerProfile)
+async def create_or_update_profile(profile_data: GymOwnerProfileCreate):
+    # Check if profile already exists
+    existing_profile = await db.gym_owner_profile.find_one({})
+    
+    if existing_profile:
+        # Update existing profile
+        update_data = profile_data.dict()
+        update_data["updated_at"] = datetime.utcnow()
+        
+        await db.gym_owner_profile.update_one(
+            {"id": existing_profile["id"]},
+            {"$set": update_data}
+        )
+        
+        updated_profile = await db.gym_owner_profile.find_one({"id": existing_profile["id"]})
+        return GymOwnerProfile(**updated_profile)
+    else:
+        # Create new profile
+        profile = GymOwnerProfile(**profile_data.dict())
+        await db.gym_owner_profile.insert_one(profile.dict())
+        return profile
+
+@api_router.get("/profile", response_model=GymOwnerProfile)
+async def get_profile():
+    profile = await db.gym_owner_profile.find_one({})
+    if not profile:
+        # Return default profile if none exists
+        return GymOwnerProfile(
+            owner_name="Gym Owner",
+            email="owner@fitforce.com",
+            phone="+1-555-0000",
+            address="123 Fitness Street",
+            city="Gym City",
+            state="GY",
+            zip_code="12345"
+        )
+    return GymOwnerProfile(**profile)
+
+@api_router.put("/profile", response_model=GymOwnerProfile)
+async def update_profile(profile_update: GymOwnerProfileUpdate):
+    existing_profile = await db.gym_owner_profile.find_one({})
+    if not existing_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    update_data = {k: v for k, v in profile_update.dict().items() if v is not None}
+    update_data["updated_at"] = datetime.utcnow()
+    
+    await db.gym_owner_profile.update_one(
+        {"id": existing_profile["id"]},
+        {"$set": update_data}
+    )
+    
+    updated_profile = await db.gym_owner_profile.find_one({"id": existing_profile["id"]})
+    return GymOwnerProfile(**updated_profile)
 @api_router.post("/members", response_model=Member)
 async def create_member(member_data: MemberCreate):
     # Check if email already exists
