@@ -507,6 +507,8 @@ const MemberManagement = ({ onNavigate }) => {
                           <input
                             type="text"
                             placeholder="John Doe"
+                            value={formData.card_holder_name}
+                            onChange={(e) => setFormData({...formData, card_holder_name: e.target.value})}
                             className="w-full p-3 border rounded-lg"
                             required={formData.enable_auto_billing}
                           />
@@ -518,6 +520,8 @@ const MemberManagement = ({ onNavigate }) => {
                           <input
                             type="text"
                             placeholder="1234 5678 9012 3456"
+                            value={formData.card_number}
+                            onChange={(e) => handleCardInputChange('card_number', e.target.value)}
                             maxLength="19"
                             className="w-full p-3 border rounded-lg"
                             required={formData.enable_auto_billing}
@@ -530,6 +534,8 @@ const MemberManagement = ({ onNavigate }) => {
                           <input
                             type="text"
                             placeholder="MM/YY"
+                            value={formData.expiry_date}
+                            onChange={(e) => handleCardInputChange('expiry_date', e.target.value)}
                             maxLength="5"
                             className="w-full p-3 border rounded-lg"
                             required={formData.enable_auto_billing}
@@ -542,6 +548,8 @@ const MemberManagement = ({ onNavigate }) => {
                           <input
                             type="text"
                             placeholder="123"
+                            value={formData.cvv}
+                            onChange={(e) => handleCardInputChange('cvv', e.target.value)}
                             maxLength="4"
                             className="w-full p-3 border rounded-lg"
                             required={formData.enable_auto_billing}
