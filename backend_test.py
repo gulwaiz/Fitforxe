@@ -196,7 +196,7 @@ class GymAPITester:
         members = result["data"]
         self.log(f"Retrieved {len(members)} members")
         
-        # Test 3: Get specific member
+        # Test 4: Get specific member
         self.log("Testing get specific member...")
         result = self.test_api_endpoint("GET", f"/members/{self.test_member_id}")
         if not result["success"]:
