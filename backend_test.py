@@ -157,7 +157,34 @@ class GymAPITester:
             return False
             
         self.test_member_id = result["data"]["id"]
+        created_member = result["data"]
         self.log(f"Created member with ID: {self.test_member_id}")
+        
+        # Verify auto_billing_enabled field
+        if not created_member.get("auto_billing_enabled", False):
+            self.log("Auto billing should be enabled for this member", "ERROR")
+            return False
+        
+        # Test 2: Create member without auto-billing
+        self.log("Testing member creation without auto-billing...")
+        member_data_no_billing = {
+            "first_name": "John",
+            "last_name": "Smith",
+            "email": "john.smith@email.com",
+            "phone": "+1-555-0125",
+            "membership_type": "basic",
+            "enable_auto_billing": False
+        }
+        
+        result = self.test_api_endpoint("POST", "/members", member_data_no_billing, 200)
+        if not result["success"]:
+            self.log("Member creation without auto-billing failed", "ERROR")
+            return False
+            
+        no_billing_member = result["data"]
+        if no_billing_member.get("auto_billing_enabled", True):
+            self.log("Auto billing should be disabled for this member", "ERROR")
+            return False
         
         # Test 2: Get all members
         self.log("Testing get all members...")
