@@ -609,20 +609,31 @@ class GymAPITester:
                 self.log("Failed to delete test member", "ERROR")
     
     def run_all_tests(self):
-        """Run all backend API tests"""
+        """Run all backend API tests including new features"""
         self.log("Starting comprehensive backend API testing...")
         self.log(f"Backend URL: {self.base_url}")
         
         test_results = {
+            "gym_owner_profile": False,
             "member_management": False,
+            "stripe_integration": False,
+            "payment_transactions": False,
             "payment_management": False,
             "attendance_tracking": False,
             "dashboard_apis": False
         }
         
         try:
-            # Test member management
+            # Test gym owner profile management
+            test_results["gym_owner_profile"] = self.test_gym_owner_profile()
+            
+            # Test enhanced member management
             test_results["member_management"] = self.test_member_management()
+            
+            # Test Stripe integration (requires member)
+            if test_results["member_management"]:
+                test_results["stripe_integration"] = self.test_stripe_integration()
+                test_results["payment_transactions"] = self.test_payment_transactions()
             
             # Test payment management (requires member)
             if test_results["member_management"]:
