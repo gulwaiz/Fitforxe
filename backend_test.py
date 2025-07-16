@@ -60,12 +60,84 @@ class GymAPITester:
             self.log(f"Request failed: {str(e)}", "ERROR")
             return {"success": False, "error": str(e)}
     
-    def test_member_management(self):
-        """Test all member management CRUD operations"""
-        self.log("=== Testing Member Management APIs ===")
+    def test_gym_owner_profile(self):
+        """Test gym owner profile management APIs"""
+        self.log("=== Testing Gym Owner Profile APIs ===")
         
-        # Test 1: Create a new member
-        self.log("Testing member creation...")
+        # Test 1: Get default profile (should return default values)
+        self.log("Testing get default profile...")
+        result = self.test_api_endpoint("GET", "/profile")
+        if not result["success"]:
+            self.log("Get default profile failed", "ERROR")
+            return False
+            
+        profile = result["data"]
+        self.log(f"Default profile retrieved: {profile['gym_name']}")
+        
+        # Test 2: Create/update profile via POST
+        self.log("Testing profile creation/update via POST...")
+        profile_data = {
+            "owner_name": "Alex Rodriguez",
+            "email": "alex@fitforce.com",
+            "phone": "+1-555-0100",
+            "address": "456 Fitness Avenue",
+            "city": "Muscle City",
+            "state": "TX",
+            "zip_code": "75001"
+        }
+        
+        result = self.test_api_endpoint("POST", "/profile", profile_data)
+        if not result["success"]:
+            self.log("Profile creation failed", "ERROR")
+            return False
+            
+        created_profile = result["data"]
+        if created_profile["owner_name"] != profile_data["owner_name"]:
+            self.log("Profile data mismatch after creation", "ERROR")
+            return False
+        
+        # Test 3: Get updated profile
+        self.log("Testing get updated profile...")
+        result = self.test_api_endpoint("GET", "/profile")
+        if not result["success"]:
+            self.log("Get updated profile failed", "ERROR")
+            return False
+            
+        updated_profile = result["data"]
+        if updated_profile["email"] != profile_data["email"]:
+            self.log("Profile email mismatch", "ERROR")
+            return False
+        
+        # Test 4: Update profile via PUT
+        self.log("Testing profile update via PUT...")
+        update_data = {
+            "phone": "+1-555-0200",
+            "city": "Strength City"
+        }
+        
+        result = self.test_api_endpoint("PUT", "/profile", update_data)
+        if not result["success"]:
+            self.log("Profile update failed", "ERROR")
+            return False
+            
+        final_profile = result["data"]
+        if final_profile["phone"] != update_data["phone"]:
+            self.log("Profile phone update failed", "ERROR")
+            return False
+            
+        if final_profile["city"] != update_data["city"]:
+            self.log("Profile city update failed", "ERROR")
+            return False
+        
+        self.log("Gym Owner Profile APIs: PASSED")
+        return True
+
+    def test_member_management(self):
+        """Test all member management CRUD operations including auto-billing"""
+        self.log("=== Testing Enhanced Member Management APIs ===")
+        
+        # Test 1: Create a new member with auto-billing enabled
+        self.log("Testing member creation with auto-billing...")
         member_data = {
             "first_name": "Sarah",
             "last_name": "Johnson",
@@ -75,7 +147,8 @@ class GymAPITester:
             "membership_type": "premium",
             "emergency_contact_name": "Mike Johnson",
             "emergency_contact_phone": "+1-555-0124",
-            "medical_conditions": "None"
+            "medical_conditions": "None",
+            "enable_auto_billing": True
         }
         
         result = self.test_api_endpoint("POST", "/members", member_data, 200)
