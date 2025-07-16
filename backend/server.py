@@ -49,6 +49,19 @@ class PaymentStatus(str, Enum):
     OVERDUE = "overdue"
     FAILED = "failed"
 
+class PaymentTransactionStatus(str, Enum):
+    INITIATED = "initiated"
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+class PaymentMethodType(str, Enum):
+    CASH = "cash"
+    STRIPE = "stripe"
+    BANK_TRANSFER = "bank_transfer"
+    CHECK = "check"
+
 # Models
 class Member(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
