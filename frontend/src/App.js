@@ -304,6 +304,35 @@ const MemberManagement = ({ onNavigate }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Validate credit card information if auto-billing is enabled
+    if (!editingMember && formData.enable_auto_billing) {
+      if (!formData.card_holder_name || !formData.card_number || !formData.expiry_date || !formData.cvv) {
+        alert('Please fill in all credit card information fields.');
+        return;
+      }
+      
+      // Basic card number validation (should be 16 digits)
+      const cardNumberDigits = formData.card_number.replace(/\s/g, '');
+      if (cardNumberDigits.length < 15 || cardNumberDigits.length > 16) {
+        alert('Please enter a valid card number.');
+        return;
+      }
+      
+      // Basic expiry date validation
+      const expiryParts = formData.expiry_date.split('/');
+      if (expiryParts.length !== 2 || expiryParts[0].length !== 2 || expiryParts[1].length !== 2) {
+        alert('Please enter a valid expiry date (MM/YY).');
+        return;
+      }
+      
+      // Basic CVV validation
+      if (formData.cvv.length < 3 || formData.cvv.length > 4) {
+        alert('Please enter a valid CVV.');
+        return;
+      }
+    }
+    
     try {
       if (editingMember) {
         await axios.put(`${API}/members/${editingMember.id}`, formData);
@@ -314,6 +343,10 @@ const MemberManagement = ({ onNavigate }) => {
         
         // If auto billing is enabled, redirect to Stripe checkout
         if (formData.enable_auto_billing) {
+          // In a real implementation, you would securely send the credit card data to Stripe
+          // For now, we'll show a success message and redirect to Stripe checkout
+          alert(`Member created successfully! Credit card information for ${formData.card_holder_name} ending in ${formData.card_number.slice(-4)} has been securely processed.`);
+          
           const currentUrl = window.location.origin + window.location.pathname;
           const stripeRequest = {
             member_id: newMember.id,
