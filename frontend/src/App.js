@@ -456,9 +456,74 @@ const MemberManagement = ({ onNavigate }) => {
                     </span>
                   </label>
                   {formData.enable_auto_billing && (
-                    <p className="text-sm text-blue-600 mt-2">
-                      After creating this member, you'll be redirected to set up their payment method securely via Stripe.
-                    </p>
+                    <div className="mt-4 p-4 bg-white rounded-lg border">
+                      <h4 className="font-semibold text-gray-900 mb-3">💳 Credit Card Information</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Cardholder Name
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="John Doe"
+                            className="w-full p-3 border rounded-lg"
+                            required={formData.enable_auto_billing}
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Card Number
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="1234 5678 9012 3456"
+                            maxLength="19"
+                            className="w-full p-3 border rounded-lg"
+                            required={formData.enable_auto_billing}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Expiry Date
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="MM/YY"
+                            maxLength="5"
+                            className="w-full p-3 border rounded-lg"
+                            required={formData.enable_auto_billing}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            CVV
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="123"
+                            maxLength="4"
+                            className="w-full p-3 border rounded-lg"
+                            required={formData.enable_auto_billing}
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                        <div className="flex items-center">
+                          <svg className="w-5 h-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.707-4.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L9 10.586l7.293-7.293a1 1 0 011.414 0z" />
+                          </svg>
+                          <span className="text-sm text-green-800">
+                            <strong>Secure Payment:</strong> All credit card information is processed securely via Stripe encryption
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                        <p className="text-sm text-blue-800">
+                          <strong>Auto-Billing Setup:</strong> Monthly membership fee (${membershipPricing[formData.membership_type] || '0'}) 
+                          will be automatically charged to this card each month.
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
