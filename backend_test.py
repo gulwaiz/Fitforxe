@@ -225,7 +225,7 @@ class GymAPITester:
             self.log("Member update data mismatch", "ERROR")
             return False
         
-        # Test 5: Test duplicate email validation
+        # Test 6: Test duplicate email validation
         self.log("Testing duplicate email validation...")
         duplicate_member = {
             "first_name": "John",
