@@ -208,7 +208,7 @@ class GymAPITester:
             self.log("Member data mismatch", "ERROR")
             return False
         
-        # Test 4: Update member
+        # Test 5: Update member
         self.log("Testing member update...")
         update_data = {
             "phone": "+1-555-9999",
