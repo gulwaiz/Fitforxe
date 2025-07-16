@@ -363,7 +363,11 @@ const MemberManagement = ({ onNavigate }) => {
       emergency_contact_name: member.emergency_contact_name || '',
       emergency_contact_phone: member.emergency_contact_phone || '',
       medical_conditions: member.medical_conditions || '',
-      enable_auto_billing: member.auto_billing_enabled || false
+      enable_auto_billing: member.auto_billing_enabled || false,
+      card_holder_name: '',
+      card_number: '',
+      expiry_date: '',
+      cvv: ''
     });
     setShowAddForm(true);
   };
