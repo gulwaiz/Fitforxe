@@ -5,7 +5,222 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Member Management Component
+// Profile Management Component
+const ProfileManagement = ({ onNavigate }) => {
+  const [profile, setProfile] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    gym_name: 'FitForce',
+    owner_name: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: '',
+    state: '',
+    zip_code: ''
+  });
+
+  useEffect(() => {
+    fetchProfile();
+  }, []);
+
+  const fetchProfile = async () => {
+    try {
+      const response = await axios.get(`${API}/profile`);
+      setProfile(response.data);
+      setFormData({
+        gym_name: response.data.gym_name || 'FitForce',
+        owner_name: response.data.owner_name || '',
+        email: response.data.email || '',
+        phone: response.data.phone || '',
+        address: response.data.address || '',
+        city: response.data.city || '',
+        state: response.data.state || '',
+        zip_code: response.data.zip_code || ''
+      });
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (profile && profile.id) {
+        await axios.put(`${API}/profile`, formData);
+      } else {
+        await axios.post(`${API}/profile`, formData);
+      }
+      setIsEditing(false);
+      fetchProfile();
+      alert('Profile updated successfully!');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      alert('Error updating profile. Please try again.');
+    }
+  };
+
+  if (!profile) {
+    return <div>Loading...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">Gym Owner Profile</h2>
+        <button
+          onClick={() => setIsEditing(!isEditing)}
+          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          {isEditing ? 'Cancel' : 'Edit Profile'}
+        </button>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-8">
+        {isEditing ? (
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Gym Name
+                </label>
+                <input
+                  type="text"
+                  value={formData.gym_name}
+                  onChange={(e) => setFormData({...formData, gym_name: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Owner Name
+                </label>
+                <input
+                  type="text"
+                  value={formData.owner_name}
+                  onChange={(e) => setFormData({...formData, owner_name: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  value={formData.phone}
+                  onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Address
+                </label>
+                <input
+                  type="text"
+                  value={formData.address}
+                  onChange={(e) => setFormData({...formData, address: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  City
+                </label>
+                <input
+                  type="text"
+                  value={formData.city}
+                  onChange={(e) => setFormData({...formData, city: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  State
+                </label>
+                <input
+                  type="text"
+                  value={formData.state}
+                  onChange={(e) => setFormData({...formData, state: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Zip Code
+                </label>
+                <input
+                  type="text"
+                  value={formData.zip_code}
+                  onChange={(e) => setFormData({...formData, zip_code: e.target.value})}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex space-x-4">
+              <button
+                type="submit"
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+              >
+                Save Changes
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Gym Information</h3>
+                <div className="space-y-2">
+                  <p><span className="font-medium">Gym Name:</span> {profile.gym_name}</p>
+                  <p><span className="font-medium">Owner:</span> {profile.owner_name}</p>
+                  <p><span className="font-medium">Email:</span> {profile.email}</p>
+                  <p><span className="font-medium">Phone:</span> {profile.phone}</p>
+                </div>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Address</h3>
+                <div className="space-y-2">
+                  <p>{profile.address}</p>
+                  <p>{profile.city}, {profile.state} {profile.zip_code}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Member Management Component with Stripe Integration
 const MemberManagement = ({ onNavigate }) => {
   const [members, setMembers] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -19,7 +234,8 @@ const MemberManagement = ({ onNavigate }) => {
     membership_type: 'basic',
     emergency_contact_name: '',
     emergency_contact_phone: '',
-    medical_conditions: ''
+    medical_conditions: '',
+    enable_auto_billing: false
   });
 
   useEffect(() => {
@@ -51,8 +267,26 @@ const MemberManagement = ({ onNavigate }) => {
       if (editingMember) {
         await axios.put(`${API}/members/${editingMember.id}`, formData);
       } else {
-        await axios.post(`${API}/members`, formData);
+        // Create member first
+        const memberResponse = await axios.post(`${API}/members`, formData);
+        const newMember = memberResponse.data;
+        
+        // If auto billing is enabled, redirect to Stripe checkout
+        if (formData.enable_auto_billing) {
+          const currentUrl = window.location.origin + window.location.pathname;
+          const stripeRequest = {
+            member_id: newMember.id,
+            membership_type: formData.membership_type,
+            success_url: `${currentUrl}?payment_success=true&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${currentUrl}?payment_cancelled=true`
+          };
+          
+          const stripeResponse = await axios.post(`${API}/stripe/checkout`, stripeRequest);
+          window.location.href = stripeResponse.data.url;
+          return;
+        }
       }
+      
       setFormData({
         first_name: '',
         last_name: '',
@@ -61,7 +295,8 @@ const MemberManagement = ({ onNavigate }) => {
         membership_type: 'basic',
         emergency_contact_name: '',
         emergency_contact_phone: '',
-        medical_conditions: ''
+        medical_conditions: '',
+        enable_auto_billing: false
       });
       setShowAddForm(false);
       setEditingMember(null);
@@ -82,7 +317,8 @@ const MemberManagement = ({ onNavigate }) => {
       membership_type: member.membership_type,
       emergency_contact_name: member.emergency_contact_name || '',
       emergency_contact_phone: member.emergency_contact_phone || '',
-      medical_conditions: member.medical_conditions || ''
+      medical_conditions: member.medical_conditions || '',
+      enable_auto_billing: member.auto_billing_enabled || false
     });
     setShowAddForm(true);
   };
@@ -206,6 +442,26 @@ const MemberManagement = ({ onNavigate }) => {
                 onChange={(e) => setFormData({...formData, medical_conditions: e.target.value})}
                 className="w-full p-3 border rounded-lg h-24"
               />
+              {!editingMember && (
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={formData.enable_auto_billing}
+                      onChange={(e) => setFormData({...formData, enable_auto_billing: e.target.checked})}
+                      className="mr-3"
+                    />
+                    <span className="text-sm">
+                      <strong>Enable Auto-Billing</strong> - Set up automatic monthly payments via credit card
+                    </span>
+                  </label>
+                  {formData.enable_auto_billing && (
+                    <p className="text-sm text-blue-600 mt-2">
+                      After creating this member, you'll be redirected to set up their payment method securely via Stripe.
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="flex space-x-4">
                 <button
                   type="submit"
@@ -226,7 +482,8 @@ const MemberManagement = ({ onNavigate }) => {
                       membership_type: 'basic',
                       emergency_contact_name: '',
                       emergency_contact_phone: '',
-                      medical_conditions: ''
+                      medical_conditions: '',
+                      enable_auto_billing: false
                     });
                   }}
                   className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
@@ -248,6 +505,7 @@ const MemberManagement = ({ onNavigate }) => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Membership</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Auto-Billing</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
           </thead>
@@ -274,6 +532,13 @@ const MemberManagement = ({ onNavigate }) => {
                   <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(member.status)}`}>
                     {member.status.toUpperCase()}
                   </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {member.auto_billing_enabled ? (
+                    <span className="text-green-600">✓ Enabled</span>
+                  ) : (
+                    <span className="text-gray-400">Disabled</span>
+                  )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                   <button
@@ -379,14 +644,23 @@ const PaymentManagement = ({ onNavigate }) => {
           onClick={() => setShowAddForm(true)}
           className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors"
         >
-          Record Payment
+          Record Cash Payment
         </button>
+      </div>
+
+      <div className="bg-blue-50 p-4 rounded-lg">
+        <h3 className="font-semibold text-blue-900 mb-2">💡 Payment Processing</h3>
+        <p className="text-blue-800 text-sm">
+          <strong>Automatic Payments:</strong> Credit card payments are processed automatically via Stripe when members are added with auto-billing enabled.
+          <br />
+          <strong>Manual Payments:</strong> Use the "Record Cash Payment" button for cash, check, or bank transfer payments.
+        </p>
       </div>
 
       {showAddForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-8 rounded-lg max-w-md w-full mx-4">
-            <h3 className="text-xl font-bold mb-6">Record New Payment</h3>
+            <h3 className="text-xl font-bold mb-6">Record Cash Payment</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -430,9 +704,8 @@ const PaymentManagement = ({ onNavigate }) => {
                   className="w-full p-3 border rounded-lg"
                 >
                   <option value="cash">Cash</option>
-                  <option value="card">Credit/Debit Card</option>
-                  <option value="bank_transfer">Bank Transfer</option>
                   <option value="check">Check</option>
+                  <option value="bank_transfer">Bank Transfer</option>
                 </select>
               </div>
               <textarea
@@ -524,9 +797,11 @@ const Dashboard = ({ onNavigate }) => {
     pending_payments: 0,
     todays_checkins: 0
   });
+  const [profile, setProfile] = useState(null);
 
   useEffect(() => {
     fetchDashboardStats();
+    fetchProfile();
   }, []);
 
   const fetchDashboardStats = async () => {
@@ -535,6 +810,15 @@ const Dashboard = ({ onNavigate }) => {
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
+    }
+  };
+
+  const fetchProfile = async () => {
+    try {
+      const response = await axios.get(`${API}/profile`);
+      setProfile(response.data);
+    } catch (error) {
+      console.error('Error fetching profile:', error);
     }
   };
 
@@ -549,8 +833,8 @@ const Dashboard = ({ onNavigate }) => {
           }}
         >
           <div className="text-center text-white z-10">
-            <h1 className="text-4xl font-bold mb-4">Gym Management Dashboard</h1>
-            <p className="text-xl">Manage your gym with ease and efficiency</p>
+            <h1 className="text-4xl font-bold mb-4">{profile?.gym_name || 'FitForce'} Dashboard</h1>
+            <p className="text-xl">Professional Gym Management System</p>
           </div>
         </div>
       </div>
@@ -869,6 +1153,7 @@ const AttendanceManagement = ({ onNavigate }) => {
 // Main App Component
 function App() {
   const [currentView, setCurrentView] = useState('dashboard');
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
 
   const navigation = [
     { id: 'dashboard', name: 'Dashboard', icon: '🏠' },
@@ -887,6 +1172,8 @@ function App() {
         return <PaymentManagement onNavigate={setCurrentView} />;
       case 'attendance':
         return <AttendanceManagement onNavigate={setCurrentView} />;
+      case 'profile':
+        return <ProfileManagement onNavigate={setCurrentView} />;
       default:
         return <Dashboard onNavigate={setCurrentView} />;
     }
@@ -898,7 +1185,7 @@ function App() {
         {/* Sidebar */}
         <div className="w-64 bg-white shadow-lg">
           <div className="p-6">
-            <h1 className="text-2xl font-bold text-gray-900">GymManager</h1>
+            <h1 className="text-2xl font-bold text-gray-900">FitForce</h1>
             <p className="text-sm text-gray-600">Professional Gym Management</p>
           </div>
           <nav className="mt-6">
@@ -918,8 +1205,61 @@ function App() {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 p-8">
-          {renderContent()}
+        <div className="flex-1 flex flex-col">
+          {/* Header */}
+          <header className="bg-white shadow-sm border-b border-gray-200 px-8 py-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 capitalize">
+                  {currentView}
+                </h2>
+              </div>
+              <div className="relative">
+                <button
+                  onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                  className="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none"
+                >
+                  <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                    <span className="text-white font-medium">👤</span>
+                  </div>
+                  <span className="font-medium">Profile</span>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {showProfileDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-50">
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          setCurrentView('profile');
+                          setShowProfileDropdown(false);
+                        }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      >
+                        Manage Profile
+                      </button>
+                      <button
+                        onClick={() => {
+                          setCurrentView('dashboard');
+                          setShowProfileDropdown(false);
+                        }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      >
+                        Settings
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* Content Area */}
+          <main className="flex-1 p-8">
+            {renderContent()}
+          </main>
         </div>
       </div>
     </div>
