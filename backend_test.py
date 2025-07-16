@@ -186,7 +186,7 @@ class GymAPITester:
             self.log("Auto billing should be disabled for this member", "ERROR")
             return False
         
-        # Test 2: Get all members
+        # Test 3: Get all members
         self.log("Testing get all members...")
         result = self.test_api_endpoint("GET", "/members")
         if not result["success"]:
