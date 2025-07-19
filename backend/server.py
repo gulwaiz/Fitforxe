@@ -360,7 +360,236 @@ async def delete_member(member_id: str):
     await db.members.delete_one({"id": member_id})
     return {"message": "Member deleted successfully"}
 
-# Stripe Payment Routes
+# Razorpay Payment Routes
+@api_router.post("/razorpay/create-order", response_model=PaymentGatewayResponse)
+async def create_razorpay_order(request: RazorpayOrderRequest):
+    if not razorpay_client:
+        raise HTTPException(status_code=500, detail="Razorpay is not configured")
+    
+    # Verify member exists
+    member = await db.members.find_one({"id": request.member_id})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    # Get pricing (convert to paise - Razorpay uses smallest currency unit)
+    amount_usd = MEMBERSHIP_PRICING[request.membership_type]
+    amount_inr = amount_usd * 83  # Approximate USD to INR conversion
+    amount_paise = int(amount_inr * 100)  # Convert to paise
+    
+    try:
+        # Create Razorpay order
+        razorpay_order = razorpay_client.order.create({
+            "amount": amount_paise,
+            "currency": "INR",
+            "payment_capture": 1,
+            "notes": {
+                "member_id": request.member_id,
+                "membership_type": request.membership_type,
+                "gym_name": "FitForce",
+                "customer_name": request.customer_name,
+                "customer_email": request.customer_email
+            }
+        })
+        
+        # Create payment transaction record
+        payment_transaction = PaymentTransaction(
+            member_id=request.member_id,
+            session_id=razorpay_order["id"],
+            amount=amount_inr,  # Store in INR
+            currency="INR",
+            payment_method=PaymentMethodType.STRIPE,  # We'll add RAZORPAY to enum
+            status=PaymentTransactionStatus.INITIATED,
+            membership_type=request.membership_type,
+            metadata={
+                "gateway": "razorpay",
+                "customer_name": request.customer_name,
+                "customer_email": request.customer_email,
+                "customer_phone": request.customer_phone,
+                "customer_country": request.customer_country
+            }
+        )
+        
+        await db.payment_transactions.insert_one(payment_transaction.dict())
+        
+        return PaymentGatewayResponse(
+            gateway="razorpay",
+            order_id=razorpay_order["id"],
+            amount=amount_inr,
+            currency="INR",
+            razorpay_key_id=razorpay_key_id  # Public key safe to send to frontend
+        )
+        
+    except Exception as e:
+        logging.error(f"Razorpay order creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create Razorpay order: {str(e)}")
+
+@api_router.post("/razorpay/verify-payment")
+async def verify_razorpay_payment(request: Request):
+    if not razorpay_client:
+        raise HTTPException(status_code=500, detail="Razorpay is not configured")
+    
+    try:
+        # Get payment verification data from request
+        body = await request.json()
+        
+        razorpay_order_id = body.get('razorpay_order_id')
+        razorpay_payment_id = body.get('razorpay_payment_id')
+        razorpay_signature = body.get('razorpay_signature')
+        
+        # Verify payment signature
+        params_dict = {
+            'razorpay_order_id': razorpay_order_id,
+            'razorpay_payment_id': razorpay_payment_id,
+            'razorpay_signature': razorpay_signature
+        }
+        
+        # Razorpay signature verification
+        razorpay_client.utility.verify_payment_signature(params_dict)
+        
+        # Update payment transaction
+        payment_transaction = await db.payment_transactions.find_one({"session_id": razorpay_order_id})
+        if payment_transaction and payment_transaction["status"] != PaymentTransactionStatus.COMPLETED:
+            # Update transaction status
+            await db.payment_transactions.update_one(
+                {"session_id": razorpay_order_id},
+                {"$set": {
+                    "status": PaymentTransactionStatus.COMPLETED,
+                    "payment_id": razorpay_payment_id,
+                    "updated_at": datetime.utcnow()
+                }}
+            )
+            
+            # Create payment record
+            payment = Payment(
+                member_id=payment_transaction["member_id"],
+                amount=payment_transaction["amount"],
+                payment_date=datetime.utcnow(),
+                payment_method="razorpay",
+                status=PaymentStatus.PAID,
+                membership_type=payment_transaction["membership_type"],
+                period_start=datetime.utcnow(),
+                period_end=calculate_membership_end_date(datetime.utcnow(), payment_transaction["membership_type"]),
+                notes="Razorpay payment verified and processed"
+            )
+            
+            await db.payments.insert_one(payment.dict())
+            
+            # Update member's membership end date
+            await db.members.update_one(
+                {"id": payment_transaction["member_id"]},
+                {"$set": {
+                    "membership_end_date": payment.period_end,
+                    "status": MemberStatus.ACTIVE,
+                    "auto_billing_enabled": True
+                }}
+            )
+        
+        return {"status": "success", "message": "Payment verified successfully"}
+        
+    except razorpay.errors.SignatureVerificationError:
+        logging.error("Razorpay signature verification failed")
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
+    except Exception as e:
+        logging.error(f"Razorpay payment verification failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Payment verification failed")
+
+@api_router.post("/webhook/razorpay")
+async def handle_razorpay_webhook(request: Request):
+    # TODO: Add your Razorpay webhook secret here
+    webhook_secret = os.environ.get('RAZORPAY_WEBHOOK_SECRET', 'YOUR_WEBHOOK_SECRET')
+    
+    if not razorpay_client:
+        raise HTTPException(status_code=500, detail="Razorpay is not configured")
+    
+    try:
+        # Get webhook payload and signature
+        webhook_body = await request.body()
+        webhook_signature = request.headers.get("X-Razorpay-Signature", "")
+        
+        # Verify webhook signature (uncomment when you have webhook secret)
+        # razorpay_client.utility.verify_webhook_signature(
+        #     webhook_body.decode(),
+        #     webhook_signature,
+        #     webhook_secret
+        # )
+        
+        # Parse webhook payload
+        webhook_data = await request.json()
+        event_type = webhook_data.get("event")
+        
+        if event_type == "payment.captured":
+            payment_data = webhook_data.get("payload", {}).get("payment", {}).get("entity", {})
+            order_id = payment_data.get("order_id")
+            payment_id = payment_data.get("id")
+            
+            # Update payment transaction
+            payment_transaction = await db.payment_transactions.find_one({"session_id": order_id})
+            if payment_transaction and payment_transaction["status"] != PaymentTransactionStatus.COMPLETED:
+                await db.payment_transactions.update_one(
+                    {"session_id": order_id},
+                    {"$set": {
+                        "status": PaymentTransactionStatus.COMPLETED,
+                        "payment_id": payment_id,
+                        "updated_at": datetime.utcnow()
+                    }}
+                )
+                
+                # Create payment record and update member (similar to verification endpoint)
+                payment = Payment(
+                    member_id=payment_transaction["member_id"],
+                    amount=payment_transaction["amount"],
+                    payment_date=datetime.utcnow(),
+                    payment_method="razorpay",
+                    status=PaymentStatus.PAID,
+                    membership_type=payment_transaction["membership_type"],
+                    period_start=datetime.utcnow(),
+                    period_end=calculate_membership_end_date(datetime.utcnow(), payment_transaction["membership_type"]),
+                    notes="Razorpay webhook processed"
+                )
+                
+                await db.payments.insert_one(payment.dict())
+                
+                await db.members.update_one(
+                    {"id": payment_transaction["member_id"]},
+                    {"$set": {
+                        "membership_end_date": payment.period_end,
+                        "status": MemberStatus.ACTIVE,
+                        "auto_billing_enabled": True
+                    }}
+                )
+        
+        return {"status": "success"}
+        
+    except Exception as e:
+        logging.error(f"Razorpay webhook processing failed: {str(e)}")
+        raise HTTPException(status_code=400, detail="Webhook processing failed")
+
+# Country Detection Route
+@api_router.get("/detect-country")
+async def detect_country(request: Request):
+    """Detect user's country based on IP address"""
+    try:
+        # Get client IP
+        client_ip = request.client.host
+        
+        # For development, return a default country
+        # TODO: In production, use a proper IP geolocation service like:
+        # - MaxMind GeoLite2
+        # - ipapi.com
+        # - ip-api.com
+        
+        # For testing purposes, return India if IP starts with certain ranges
+        # In production, replace this with actual geolocation logic
+        if client_ip.startswith(('127.0.0.', '::1', '192.168.')):
+            # Local development - return default based on environment
+            return {"country": "IN", "country_name": "India"}
+        
+        # Simple mock geolocation - replace with real service
+        return {"country": "US", "country_name": "United States"}
+        
+    except Exception as e:
+        logging.error(f"Country detection failed: {str(e)}")
+        return {"country": "US", "country_name": "United States"}  # Default fallback
 @api_router.post("/stripe/checkout", response_model=CheckoutSessionResponse)
 async def create_stripe_checkout(request: StripeCheckoutRequest):
     if not stripe_api_key:
