@@ -25,6 +25,21 @@ stripe_api_key = os.environ.get('STRIPE_API_KEY')
 if not stripe_api_key:
     logging.warning("STRIPE_API_KEY not found in environment variables")
 
+# Razorpay configuration
+# TODO: Replace with your actual Razorpay API keys from https://dashboard.razorpay.com/
+razorpay_key_id = os.environ.get('RAZORPAY_KEY_ID', 'rzp_test_YOUR_KEY_ID')  # Insert your Razorpay Key ID here
+razorpay_key_secret = os.environ.get('RAZORPAY_KEY_SECRET', 'YOUR_KEY_SECRET')  # Insert your Razorpay Key Secret here
+
+import razorpay
+razorpay_client = None
+if razorpay_key_id and razorpay_key_secret:
+    try:
+        razorpay_client = razorpay.Client(auth=(razorpay_key_id, razorpay_key_secret))
+    except Exception as e:
+        logging.warning(f"Razorpay client initialization failed: {e}")
+else:
+    logging.warning("RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET not found in environment variables")
+
 # Create the main app without a prefix
 app = FastAPI()
 
