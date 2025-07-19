@@ -398,7 +398,7 @@ async def create_razorpay_order(request: RazorpayOrderRequest):
             session_id=razorpay_order["id"],
             amount=amount_inr,  # Store in INR
             currency="INR",
-            payment_method=PaymentMethodType.STRIPE,  # We'll add RAZORPAY to enum
+            payment_method=PaymentMethodType.RAZORPAY,
             status=PaymentTransactionStatus.INITIATED,
             membership_type=request.membership_type,
             metadata={
