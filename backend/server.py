@@ -74,6 +74,7 @@ class PaymentTransactionStatus(str, Enum):
 class PaymentMethodType(str, Enum):
     CASH = "cash"
     STRIPE = "stripe"
+    RAZORPAY = "razorpay"
     BANK_TRANSFER = "bank_transfer"
     CHECK = "check"
 
