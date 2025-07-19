@@ -5,6 +5,432 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Checkout Page Component
+const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
+  const [paymentGateway, setPaymentGateway] = useState('stripe');
+  const [userCountry, setUserCountry] = useState('US');
+  const [isLoading, setIsLoading] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [formData, setFormData] = useState({
+    name: memberData?.name || '',
+    email: memberData?.email || '',
+    phone: memberData?.phone || '',
+    country: '',
+    membership_plan: 'basic'
+  });
+
+  const membershipPlans = {
+    basic: { name: 'Basic', price: 29.99, features: ['Gym Access', 'Basic Equipment', 'Locker Room'] },
+    premium: { name: 'Premium', price: 49.99, features: ['Gym Access', 'All Equipment', 'Group Classes', 'Locker Room'] },
+    vip: { name: 'VIP', price: 79.99, features: ['All Premium Features', 'Personal Training', 'Priority Support', 'Premium Locker'] }
+  };
+
+  useEffect(() => {
+    detectCountry();
+  }, []);
+
+  const detectCountry = async () => {
+    try {
+      const response = await axios.get(`${API}/detect-country`);
+      const country = response.data.country;
+      setUserCountry(country);
+      setFormData(prev => ({ ...prev, country: country }));
+      
+      // Auto-select payment gateway based on country
+      if (country === 'IN') {
+        setPaymentGateway('razorpay');
+      } else {
+        setPaymentGateway('stripe');
+      }
+    } catch (error) {
+      console.error('Error detecting country:', error);
+      setPaymentGateway('stripe'); // Default to Stripe
+    }
+  };
+
+  const handlePayment = async () => {
+    setIsLoading(true);
+    setPaymentStatus(null);
+
+    try {
+      if (paymentGateway === 'razorpay') {
+        await processRazorpayPayment();
+      } else {
+        await processStripePayment();
+      }
+    } catch (error) {
+      console.error('Payment error:', error);
+      setPaymentStatus({
+        type: 'error',
+        message: 'Payment processing failed. Please try again.'
+      });
+    }
+    setIsLoading(false);
+  };
+
+  const processRazorpayPayment = async () => {
+    try {
+      // Create member first if not exists
+      let memberId = memberData?.id;
+      if (!memberId) {
+        const memberResponse = await axios.post(`${API}/members`, {
+          first_name: formData.name.split(' ')[0],
+          last_name: formData.name.split(' ').slice(1).join(' ') || 'Member',
+          email: formData.email,
+          phone: formData.phone,
+          membership_type: formData.membership_plan,
+          enable_auto_billing: true
+        });
+        memberId = memberResponse.data.id;
+      }
+
+      // Create Razorpay order
+      const orderResponse = await axios.post(`${API}/razorpay/create-order`, {
+        member_id: memberId,
+        membership_type: formData.membership_plan,
+        customer_name: formData.name,
+        customer_email: formData.email,
+        customer_phone: formData.phone,
+        customer_country: formData.country
+      });
+
+      const { order_id, amount, razorpay_key_id } = orderResponse.data;
+
+      // Initialize Razorpay checkout
+      const options = {
+        key: razorpay_key_id,
+        amount: amount * 100, // Convert to paise
+        currency: 'INR',
+        name: 'FitForce Gym',
+        description: `${membershipPlans[formData.membership_plan].name} Membership`,
+        order_id: order_id,
+        handler: async (response) => {
+          try {
+            // Verify payment on backend
+            await axios.post(`${API}/razorpay/verify-payment`, {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature
+            });
+            
+            setPaymentStatus({
+              type: 'success',
+              message: 'Payment successful! Welcome to FitForce!'
+            });
+          } catch (error) {
+            setPaymentStatus({
+              type: 'error',
+              message: 'Payment verification failed. Please contact support.'
+            });
+          }
+        },
+        prefill: {
+          name: formData.name,
+          email: formData.email,
+          contact: formData.phone
+        },
+        theme: {
+          color: '#3B82F6'
+        },
+        modal: {
+          ondismiss: () => {
+            setPaymentStatus({
+              type: 'error',
+              message: 'Payment was cancelled.'
+            });
+          }
+        }
+      };
+
+      // Load Razorpay script and open checkout
+      if (window.Razorpay) {
+        const razorpay = new window.Razorpay(options);
+        razorpay.open();
+      } else {
+        // Load Razorpay script dynamically
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.onload = () => {
+          const razorpay = new window.Razorpay(options);
+          razorpay.open();
+        };
+        document.body.appendChild(script);
+      }
+
+    } catch (error) {
+      console.error('Razorpay payment error:', error);
+      throw error;
+    }
+  };
+
+  const processStripePayment = async () => {
+    try {
+      // Create member first if not exists
+      let memberId = memberData?.id;
+      if (!memberId) {
+        const memberResponse = await axios.post(`${API}/members`, {
+          first_name: formData.name.split(' ')[0],
+          last_name: formData.name.split(' ').slice(1).join(' ') || 'Member',
+          email: formData.email,
+          phone: formData.phone,
+          membership_type: formData.membership_plan,
+          enable_auto_billing: true
+        });
+        memberId = memberResponse.data.id;
+      }
+
+      // Create Stripe checkout session
+      const currentUrl = window.location.origin + window.location.pathname;
+      const stripeResponse = await axios.post(`${API}/stripe/checkout`, {
+        member_id: memberId,
+        membership_type: formData.membership_plan,
+        success_url: `${currentUrl}?payment_success=true&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${currentUrl}?payment_cancelled=true`
+      });
+
+      // Redirect to Stripe Checkout
+      window.location.href = stripeResponse.data.url;
+
+    } catch (error) {
+      console.error('Stripe payment error:', error);
+      throw error;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-4xl w-full max-h-screen overflow-y-auto">
+        {/* Header */}
+        <div className="sticky top-0 bg-white border-b p-6 flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-gray-900">Join FitForce</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 text-2xl"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Left Column - Customer Information */}
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Information</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                    <input
+                      type="text"
+                      value={formData.name}
+                      onChange={(e) => setFormData({...formData, name: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({...formData, email: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                    <input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+                    <select
+                      value={formData.country}
+                      onChange={(e) => setFormData({...formData, country: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="IN">India</option>
+                      <option value="US">United States</option>
+                      <option value="GB">United Kingdom</option>
+                      <option value="CA">Canada</option>
+                      <option value="AU">Australia</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment Method Selection */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Payment Method</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center p-3 border border-gray-200 rounded-lg">
+                    <input
+                      type="radio"
+                      id="razorpay"
+                      name="payment_gateway"
+                      value="razorpay"
+                      checked={paymentGateway === 'razorpay'}
+                      onChange={(e) => setPaymentGateway(e.target.value)}
+                      className="mr-3"
+                    />
+                    <label htmlFor="razorpay" className="flex items-center flex-grow">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white font-bold text-xs">RP</div>
+                        <div>
+                          <div className="font-medium">Razorpay</div>
+                          <div className="text-sm text-gray-500">UPI, Cards, NetBanking (India)</div>
+                        </div>
+                      </div>
+                      {userCountry === 'IN' && (
+                        <span className="ml-auto bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Recommended</span>
+                      )}
+                    </label>
+                  </div>
+                  
+                  <div className="flex items-center p-3 border border-gray-200 rounded-lg">
+                    <input
+                      type="radio"
+                      id="stripe"
+                      name="payment_gateway"
+                      value="stripe"
+                      checked={paymentGateway === 'stripe'}
+                      onChange={(e) => setPaymentGateway(e.target.value)}
+                      className="mr-3"
+                    />
+                    <label htmlFor="stripe" className="flex items-center flex-grow">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 bg-purple-600 rounded flex items-center justify-center text-white font-bold text-xs">ST</div>
+                        <div>
+                          <div className="font-medium">Stripe</div>
+                          <div className="text-sm text-gray-500">Credit/Debit Cards (International)</div>
+                        </div>
+                      </div>
+                      {userCountry !== 'IN' && (
+                        <span className="ml-auto bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Recommended</span>
+                      )}
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column - Membership Plans */}
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Choose Your Plan</h3>
+                <div className="space-y-4">
+                  {Object.entries(membershipPlans).map(([planKey, plan]) => (
+                    <div
+                      key={planKey}
+                      className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                        formData.membership_plan === planKey
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                      onClick={() => setFormData({...formData, membership_plan: planKey})}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <input
+                            type="radio"
+                            value={planKey}
+                            checked={formData.membership_plan === planKey}
+                            onChange={() => {}}
+                            className="mr-3"
+                          />
+                          <div>
+                            <div className="font-semibold text-gray-900">{plan.name}</div>
+                            <div className="text-sm text-gray-600">
+                              {plan.features.join(' • ')}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xl font-bold text-gray-900">
+                            {paymentGateway === 'razorpay' ? '₹' : '$'}
+                            {paymentGateway === 'razorpay' ? (plan.price * 83).toFixed(0) : plan.price}
+                          </div>
+                          <div className="text-sm text-gray-500">/month</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Payment Status */}
+              {paymentStatus && (
+                <div className={`p-4 rounded-lg ${
+                  paymentStatus.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
+                }`}>
+                  <div className="flex items-center">
+                    {paymentStatus.type === 'success' ? (
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    )}
+                    {paymentStatus.message}
+                  </div>
+                </div>
+              )}
+
+              {/* Payment Button */}
+              <button
+                onClick={handlePayment}
+                disabled={isLoading || !formData.name || !formData.email || !formData.phone}
+                className={`w-full py-4 px-6 rounded-lg font-semibold text-white transition-all ${
+                  isLoading || !formData.name || !formData.email || !formData.phone
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : paymentGateway === 'razorpay'
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-purple-600 hover:bg-purple-700'
+                }`}
+              >
+                {isLoading ? (
+                  <div className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Processing...
+                  </div>
+                ) : (
+                  `Pay ${paymentGateway === 'razorpay' ? '₹' : '$'}${
+                    paymentGateway === 'razorpay' 
+                      ? (membershipPlans[formData.membership_plan].price * 83).toFixed(0)
+                      : membershipPlans[formData.membership_plan].price
+                  } with ${paymentGateway === 'razorpay' ? 'Razorpay' : 'Stripe'}`
+                )}
+              </button>
+
+              <div className="text-center text-sm text-gray-500">
+                <div className="flex items-center justify-center space-x-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  <span>Secure payment processing</span>
+                </div>
+                <p className="mt-1">Your payment information is encrypted and secure</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Profile Management Component
 const ProfileManagement = ({ onNavigate }) => {
   const [profile, setProfile] = useState(null);
@@ -61,12 +487,12 @@ const ProfileManagement = ({ onNavigate }) => {
   };
 
   if (!profile) {
-    return <div>Loading...</div>;
+    return <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-gray-900">Gym Owner Profile</h2>
         <button
           onClick={() => setIsEditing(!isEditing)}
@@ -76,7 +502,7 @@ const ProfileManagement = ({ onNavigate }) => {
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-md p-8">
+      <div className="bg-white rounded-lg shadow-md p-6 lg:p-8">
         {isEditing ? (
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -88,7 +514,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="text"
                   value={formData.gym_name}
                   onChange={(e) => setFormData({...formData, gym_name: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -100,7 +526,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="text"
                   value={formData.owner_name}
                   onChange={(e) => setFormData({...formData, owner_name: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -112,7 +538,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -124,7 +550,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -136,7 +562,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="text"
                   value={formData.address}
                   onChange={(e) => setFormData({...formData, address: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -148,7 +574,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="text"
                   value={formData.city}
                   onChange={(e) => setFormData({...formData, city: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -160,7 +586,7 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="text"
                   value={formData.state}
                   onChange={(e) => setFormData({...formData, state: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -172,22 +598,22 @@ const ProfileManagement = ({ onNavigate }) => {
                   type="text"
                   value={formData.zip_code}
                   onChange={(e) => setFormData({...formData, zip_code: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
             </div>
-            <div className="flex space-x-4">
+            <div className="flex flex-col sm:flex-row gap-4">
               <button
                 type="submit"
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Save Changes
               </button>
               <button
                 type="button"
                 onClick={() => setIsEditing(false)}
-                className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+                className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600 transition-colors"
               >
                 Cancel
               </button>
@@ -220,10 +646,11 @@ const ProfileManagement = ({ onNavigate }) => {
   );
 };
 
-// Member Management Component with Stripe Integration
+// Member Management Component with enhanced checkout
 const MemberManagement = ({ onNavigate }) => {
   const [members, setMembers] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
   const [editingMember, setEditingMember] = useState(null);
   const [membershipPricing, setMembershipPricing] = useState({});
   const [formData, setFormData] = useState({
@@ -242,6 +669,29 @@ const MemberManagement = ({ onNavigate }) => {
     expiry_date: '',
     cvv: ''
   });
+
+  useEffect(() => {
+    fetchMembers();
+    fetchMembershipPricing();
+  }, []);
+
+  const fetchMembers = async () => {
+    try {
+      const response = await axios.get(`${API}/members`);
+      setMembers(response.data);
+    } catch (error) {
+      console.error('Error fetching members:', error);
+    }
+  };
+
+  const fetchMembershipPricing = async () => {
+    try {
+      const response = await axios.get(`${API}/membership-pricing`);
+      setMembershipPricing(response.data);
+    } catch (error) {
+      console.error('Error fetching pricing:', error);
+    }
+  };
 
   // Credit card formatting functions
   const formatCardNumber = (value) => {
@@ -279,103 +729,24 @@ const MemberManagement = ({ onNavigate }) => {
     setFormData({...formData, [field]: formattedValue});
   };
 
-  useEffect(() => {
-    fetchMembers();
-    fetchMembershipPricing();
-  }, []);
-
-  const fetchMembers = async () => {
-    try {
-      const response = await axios.get(`${API}/members`);
-      setMembers(response.data);
-    } catch (error) {
-      console.error('Error fetching members:', error);
-    }
-  };
-
-  const fetchMembershipPricing = async () => {
-    try {
-      const response = await axios.get(`${API}/membership-pricing`);
-      setMembershipPricing(response.data);
-    } catch (error) {
-      console.error('Error fetching pricing:', error);
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Validate credit card information if auto-billing is enabled
+    // If auto-billing is enabled and not editing, show checkout instead
     if (!editingMember && formData.enable_auto_billing) {
-      if (!formData.card_holder_name || !formData.card_number || !formData.expiry_date || !formData.cvv) {
-        alert('Please fill in all credit card information fields.');
-        return;
-      }
-      
-      // Basic card number validation (should be 16 digits)
-      const cardNumberDigits = formData.card_number.replace(/\s/g, '');
-      if (cardNumberDigits.length < 15 || cardNumberDigits.length > 16) {
-        alert('Please enter a valid card number.');
-        return;
-      }
-      
-      // Basic expiry date validation
-      const expiryParts = formData.expiry_date.split('/');
-      if (expiryParts.length !== 2 || expiryParts[0].length !== 2 || expiryParts[1].length !== 2) {
-        alert('Please enter a valid expiry date (MM/YY).');
-        return;
-      }
-      
-      // Basic CVV validation
-      if (formData.cvv.length < 3 || formData.cvv.length > 4) {
-        alert('Please enter a valid CVV.');
-        return;
-      }
+      setShowCheckout(true);
+      return;
     }
     
     try {
       if (editingMember) {
         await axios.put(`${API}/members/${editingMember.id}`, formData);
       } else {
-        // Create member first
-        const memberResponse = await axios.post(`${API}/members`, formData);
-        const newMember = memberResponse.data;
-        
-        // If auto billing is enabled, redirect to Stripe checkout
-        if (formData.enable_auto_billing) {
-          // In a real implementation, you would securely send the credit card data to Stripe
-          // For now, we'll show a success message and redirect to Stripe checkout
-          alert(`Member created successfully! Credit card information for ${formData.card_holder_name} ending in ${formData.card_number.slice(-4)} has been securely processed.`);
-          
-          const currentUrl = window.location.origin + window.location.pathname;
-          const stripeRequest = {
-            member_id: newMember.id,
-            membership_type: formData.membership_type,
-            success_url: `${currentUrl}?payment_success=true&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${currentUrl}?payment_cancelled=true`
-          };
-          
-          const stripeResponse = await axios.post(`${API}/stripe/checkout`, stripeRequest);
-          window.location.href = stripeResponse.data.url;
-          return;
-        }
+        // Create member without auto-billing
+        await axios.post(`${API}/members`, formData);
       }
       
-      setFormData({
-        first_name: '',
-        last_name: '',
-        email: '',
-        phone: '',
-        membership_type: 'basic',
-        emergency_contact_name: '',
-        emergency_contact_phone: '',
-        medical_conditions: '',
-        enable_auto_billing: false,
-        card_holder_name: '',
-        card_number: '',
-        expiry_date: '',
-        cvv: ''
-      });
+      resetForm();
       setShowAddForm(false);
       setEditingMember(null);
       fetchMembers();
@@ -383,6 +754,24 @@ const MemberManagement = ({ onNavigate }) => {
       console.error('Error saving member:', error);
       alert('Error saving member. Please try again.');
     }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      first_name: '',
+      last_name: '',
+      email: '',
+      phone: '',
+      membership_type: 'basic',
+      emergency_contact_name: '',
+      emergency_contact_phone: '',
+      medical_conditions: '',
+      enable_auto_billing: false,
+      card_holder_name: '',
+      card_number: '',
+      expiry_date: '',
+      cvv: ''
+    });
   };
 
   const handleEdit = (member) => {
@@ -437,7 +826,7 @@ const MemberManagement = ({ onNavigate }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-gray-900">Member Management</h2>
         <button
           onClick={() => setShowAddForm(true)}
@@ -447,20 +836,38 @@ const MemberManagement = ({ onNavigate }) => {
         </button>
       </div>
 
-      {showAddForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-8 rounded-lg max-w-2xl w-full mx-4 max-h-screen overflow-y-auto">
+      {/* Checkout Modal */}
+      {showCheckout && (
+        <CheckoutPage
+          memberData={{
+            name: `${formData.first_name} ${formData.last_name}`,
+            email: formData.email,
+            phone: formData.phone
+          }}
+          onNavigate={onNavigate}
+          onClose={() => {
+            setShowCheckout(false);
+            setShowAddForm(false);
+            resetForm();
+            fetchMembers();
+          }}
+        />
+      )}
+
+      {showAddForm && !showCheckout && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40 p-4">
+          <div className="bg-white p-6 lg:p-8 rounded-lg max-w-2xl w-full max-h-screen overflow-y-auto">
             <h3 className="text-xl font-bold mb-6">
               {editingMember ? 'Edit Member' : 'Add New Member'}
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <input
                   type="text"
                   placeholder="First Name"
                   value={formData.first_name}
                   onChange={(e) => setFormData({...formData, first_name: e.target.value})}
-                  className="p-3 border rounded-lg"
+                  className="p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
                 <input
@@ -468,7 +875,7 @@ const MemberManagement = ({ onNavigate }) => {
                   placeholder="Last Name"
                   value={formData.last_name}
                   onChange={(e) => setFormData({...formData, last_name: e.target.value})}
-                  className="p-3 border rounded-lg"
+                  className="p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -477,7 +884,7 @@ const MemberManagement = ({ onNavigate }) => {
                 placeholder="Email"
                 value={formData.email}
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
-                className="w-full p-3 border rounded-lg"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
               />
               <input
@@ -485,7 +892,7 @@ const MemberManagement = ({ onNavigate }) => {
                 placeholder="Phone"
                 value={formData.phone}
                 onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                className="w-full p-3 border rounded-lg"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
               />
               <div>
@@ -495,34 +902,34 @@ const MemberManagement = ({ onNavigate }) => {
                 <select
                   value={formData.membership_type}
                   onChange={(e) => setFormData({...formData, membership_type: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="basic">Basic - ${membershipPricing.basic}/month</option>
                   <option value="premium">Premium - ${membershipPricing.premium}/month</option>
                   <option value="vip">VIP - ${membershipPricing.vip}/month</option>
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <input
                   type="text"
                   placeholder="Emergency Contact Name"
                   value={formData.emergency_contact_name}
                   onChange={(e) => setFormData({...formData, emergency_contact_name: e.target.value})}
-                  className="p-3 border rounded-lg"
+                  className="p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
                 <input
                   type="tel"
                   placeholder="Emergency Contact Phone"
                   value={formData.emergency_contact_phone}
                   onChange={(e) => setFormData({...formData, emergency_contact_phone: e.target.value})}
-                  className="p-3 border rounded-lg"
+                  className="p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               <textarea
                 placeholder="Medical Conditions (Optional)"
                 value={formData.medical_conditions}
                 onChange={(e) => setFormData({...formData, medical_conditions: e.target.value})}
-                className="w-full p-3 border rounded-lg h-24"
+                className="w-full p-3 border rounded-lg h-24 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
               {!editingMember && (
                 <div className="bg-blue-50 p-4 rounded-lg">
@@ -534,118 +941,31 @@ const MemberManagement = ({ onNavigate }) => {
                       className="mr-3"
                     />
                     <span className="text-sm">
-                      <strong>Enable Auto-Billing</strong> - Set up automatic monthly payments via credit card
+                      <strong>Enable Auto-Billing</strong> - Set up automatic monthly payments
                     </span>
                   </label>
                   {formData.enable_auto_billing && (
-                    <div className="mt-4 p-4 bg-white rounded-lg border">
-                      <h4 className="font-semibold text-gray-900 mb-3">💳 Credit Card Information</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Cardholder Name
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="John Doe"
-                            value={formData.card_holder_name}
-                            onChange={(e) => setFormData({...formData, card_holder_name: e.target.value})}
-                            className="w-full p-3 border rounded-lg"
-                            required={formData.enable_auto_billing}
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Card Number
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="1234 5678 9012 3456"
-                            value={formData.card_number}
-                            onChange={(e) => handleCardInputChange('card_number', e.target.value)}
-                            maxLength="19"
-                            className="w-full p-3 border rounded-lg"
-                            required={formData.enable_auto_billing}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Expiry Date
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="MM/YY"
-                            value={formData.expiry_date}
-                            onChange={(e) => handleCardInputChange('expiry_date', e.target.value)}
-                            maxLength="5"
-                            className="w-full p-3 border rounded-lg"
-                            required={formData.enable_auto_billing}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            CVV
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="123"
-                            value={formData.cvv}
-                            onChange={(e) => handleCardInputChange('cvv', e.target.value)}
-                            maxLength="4"
-                            className="w-full p-3 border rounded-lg"
-                            required={formData.enable_auto_billing}
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-4 p-3 bg-green-50 rounded-lg">
-                        <div className="flex items-center">
-                          <svg className="w-5 h-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.707-4.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L9 10.586l7.293-7.293a1 1 0 011.414 0z" />
-                          </svg>
-                          <span className="text-sm text-green-800">
-                            <strong>Secure Payment:</strong> All credit card information is processed securely via Stripe encryption
-                          </span>
-                        </div>
-                      </div>
-                      <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-                        <p className="text-sm text-blue-800">
-                          <strong>Auto-Billing Setup:</strong> Monthly membership fee (${membershipPricing[formData.membership_type] || '0'}) 
-                          will be automatically charged to this card each month.
-                        </p>
-                      </div>
-                    </div>
+                    <p className="text-sm text-blue-600 mt-2">
+                      You'll be redirected to our secure payment page to complete the setup with dual payment options (Stripe/Razorpay).
+                    </p>
                   )}
                 </div>
               )}
-              <div className="flex space-x-4">
+              <div className="flex flex-col sm:flex-row gap-4">
                 <button
                   type="submit"
-                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  {editingMember ? 'Update Member' : 'Add Member'}
+                  {editingMember ? 'Update Member' : 'Continue'}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddForm(false);
                     setEditingMember(null);
-                    setFormData({
-                      first_name: '',
-                      last_name: '',
-                      email: '',
-                      phone: '',
-                      membership_type: 'basic',
-                      emergency_contact_name: '',
-                      emergency_contact_phone: '',
-                      medical_conditions: '',
-                      enable_auto_billing: false,
-                      card_holder_name: '',
-                      card_number: '',
-                      expiry_date: '',
-                      cvv: ''
-                    });
+                    resetForm();
                   }}
-                  className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+                  className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600 transition-colors"
                 >
                   Cancel
                 </button>
@@ -656,73 +976,75 @@ const MemberManagement = ({ onNavigate }) => {
       )}
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Membership</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Auto-Billing</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {members.map((member) => (
-              <tr key={member.id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">
-                    {member.first_name} {member.last_name}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {member.email}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {member.phone}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getMembershipColor(member.membership_type)}`}>
-                    {member.membership_type.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(member.status)}`}>
-                    {member.status.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {member.auto_billing_enabled ? (
-                    <span className="text-green-600">✓ Enabled</span>
-                  ) : (
-                    <span className="text-gray-400">Disabled</span>
-                  )}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
-                  <button
-                    onClick={() => handleEdit(member)}
-                    className="text-blue-600 hover:text-blue-900"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(member.id)}
-                    className="text-red-600 hover:text-red-900"
-                  >
-                    Delete
-                  </button>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">Phone</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Membership</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Auto-Billing</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {members.map((member) => (
+                <tr key={member.id}>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-gray-900">
+                      {member.first_name} {member.last_name}
+                    </div>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <div className="truncate max-w-32">{member.email}</div>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden sm:table-cell">
+                    {member.phone}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getMembershipColor(member.membership_type)}`}>
+                      {member.membership_type.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(member.status)}`}>
+                      {member.status.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden lg:table-cell">
+                    {member.auto_billing_enabled ? (
+                      <span className="text-green-600">✓ Enabled</span>
+                    ) : (
+                      <span className="text-gray-400">Disabled</span>
+                    )}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                    <button
+                      onClick={() => handleEdit(member)}
+                      className="text-blue-600 hover:text-blue-900"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(member.id)}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 };
 
-// Payment Management Component
+// Payment Management Component (keeping existing implementation with responsive enhancements)
 const PaymentManagement = ({ onNavigate }) => {
   const [payments, setPayments] = useState([]);
   const [members, setMembers] = useState([]);
@@ -797,7 +1119,7 @@ const PaymentManagement = ({ onNavigate }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-gray-900">Payment Management</h2>
         <button
           onClick={() => setShowAddForm(true)}
@@ -809,16 +1131,15 @@ const PaymentManagement = ({ onNavigate }) => {
 
       <div className="bg-blue-50 p-4 rounded-lg">
         <h3 className="font-semibold text-blue-900 mb-2">💡 Payment Processing</h3>
-        <p className="text-blue-800 text-sm">
-          <strong>Automatic Payments:</strong> Credit card payments are processed automatically via Stripe when members are added with auto-billing enabled.
-          <br />
-          <strong>Manual Payments:</strong> Use the "Record Cash Payment" button for cash, check, or bank transfer payments.
-        </p>
+        <div className="text-blue-800 text-sm space-y-1">
+          <p><strong>Automatic Payments:</strong> Credit card payments are processed automatically via Stripe/Razorpay when members are added with auto-billing.</p>
+          <p><strong>Manual Payments:</strong> Use "Record Cash Payment" for cash, check, or bank transfer payments.</p>
+        </div>
       </div>
 
       {showAddForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-8 rounded-lg max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40 p-4">
+          <div className="bg-white p-6 lg:p-8 rounded-lg max-w-md w-full">
             <h3 className="text-xl font-bold mb-6">Record Cash Payment</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -828,7 +1149,7 @@ const PaymentManagement = ({ onNavigate }) => {
                 <select
                   value={formData.member_id}
                   onChange={(e) => setFormData({...formData, member_id: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 >
                   <option value="">Select Member</option>
@@ -846,7 +1167,7 @@ const PaymentManagement = ({ onNavigate }) => {
                 <select
                   value={formData.membership_type}
                   onChange={(e) => setFormData({...formData, membership_type: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="basic">Basic - ${membershipPricing.basic}</option>
                   <option value="premium">Premium - ${membershipPricing.premium}</option>
@@ -860,7 +1181,7 @@ const PaymentManagement = ({ onNavigate }) => {
                 <select
                   value={formData.payment_method}
                   onChange={(e) => setFormData({...formData, payment_method: e.target.value})}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="cash">Cash</option>
                   <option value="check">Check</option>
@@ -871,12 +1192,12 @@ const PaymentManagement = ({ onNavigate }) => {
                 placeholder="Notes (Optional)"
                 value={formData.notes}
                 onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                className="w-full p-3 border rounded-lg h-20"
+                className="w-full p-3 border rounded-lg h-20 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
-              <div className="flex space-x-4">
+              <div className="flex flex-col sm:flex-row gap-4">
                 <button
                   type="submit"
-                  className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
+                  className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors"
                 >
                   Record Payment
                 </button>
@@ -891,7 +1212,7 @@ const PaymentManagement = ({ onNavigate }) => {
                       notes: ''
                     });
                   }}
-                  className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+                  className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600 transition-colors"
                 >
                   Cancel
                 </button>
@@ -902,52 +1223,54 @@ const PaymentManagement = ({ onNavigate }) => {
       )}
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Member</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment Method</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Membership</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {payments.map((payment) => (
-              <tr key={payment.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {getMemberName(payment.member_id)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  ${payment.amount}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {payment.payment_method.replace('_', ' ').toUpperCase()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                    {payment.membership_type.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {new Date(payment.payment_date).toLocaleDateString()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                    {payment.status.toUpperCase()}
-                  </span>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Member</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">Method</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Membership</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {payments.map((payment) => (
+                <tr key={payment.id}>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <div className="truncate max-w-32">{getMemberName(payment.member_id)}</div>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    ${payment.amount}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden sm:table-cell">
+                    {payment.payment_method.replace('_', ' ').toUpperCase()}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap hidden lg:table-cell">
+                    <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                      {payment.membership_type.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(payment.payment_date).toLocaleDateString()}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
+                    <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                      {payment.status.toUpperCase()}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 };
 
-// Dashboard Component
+// Dashboard Component (with responsive enhancements)
 const Dashboard = ({ onNavigate }) => {
   const [stats, setStats] = useState({
     total_members: 0,
@@ -986,91 +1309,91 @@ const Dashboard = ({ onNavigate }) => {
       <div className="relative bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg overflow-hidden">
         <div className="absolute inset-0 bg-black opacity-20"></div>
         <div 
-          className="relative bg-cover bg-center h-64 flex items-center justify-center"
+          className="relative bg-cover bg-center h-48 lg:h-64 flex items-center justify-center"
           style={{
             backgroundImage: `url('https://images.unsplash.com/photo-1534438327276-14e5300c3a48?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHxneW18ZW58MHx8fHwxNzUyNDU1NzU1fDA&ixlib=rb-4.1.0&q=85')`
           }}
         >
-          <div className="text-center text-white z-10">
-            <h1 className="text-4xl font-bold mb-4">{profile?.gym_name || 'FitForce'} Dashboard</h1>
-            <p className="text-xl">Professional Gym Management System</p>
+          <div className="text-center text-white z-10 p-4">
+            <h1 className="text-3xl lg:text-4xl font-bold mb-2 lg:mb-4">{profile?.gym_name || 'FitForce'} Dashboard</h1>
+            <p className="text-lg lg:text-xl">Professional Gym Management System</p>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow-md">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 lg:gap-6">
+        <div className="bg-white p-4 lg:p-6 rounded-lg shadow-md">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-blue-100 text-blue-600">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Members</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats.total_members}</p>
+              <p className="text-xs lg:text-sm font-medium text-gray-600">Total Members</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.total_members}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 lg:p-6 rounded-lg shadow-md">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-green-100 text-green-600">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Active Members</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats.active_members}</p>
+              <p className="text-xs lg:text-sm font-medium text-gray-600">Active Members</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.active_members}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 lg:p-6 rounded-lg shadow-md">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-yellow-100 text-yellow-600">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
               </svg>
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Monthly Revenue</p>
-              <p className="text-2xl font-semibold text-gray-900">${stats.monthly_revenue.toFixed(2)}</p>
+              <p className="text-xs lg:text-sm font-medium text-gray-600">Monthly Revenue</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">${stats.monthly_revenue.toFixed(2)}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 lg:p-6 rounded-lg shadow-md">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-red-100 text-red-600">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.664-.833-2.464 0L4.35 15.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Expired Memberships</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats.pending_payments}</p>
+              <p className="text-xs lg:text-sm font-medium text-gray-600">Expired</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.pending_payments}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 lg:p-6 rounded-lg shadow-md">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-purple-100 text-purple-600">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Today's Check-ins</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats.todays_checkins}</p>
+              <p className="text-xs lg:text-sm font-medium text-gray-600">Today's Check-ins</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.todays_checkins}</p>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
           <div className="space-y-3">
@@ -1144,7 +1467,7 @@ const Dashboard = ({ onNavigate }) => {
   );
 };
 
-// Attendance Component
+// Attendance Component (with responsive enhancements)
 const AttendanceManagement = ({ onNavigate }) => {
   const [attendance, setAttendance] = useState([]);
   const [members, setMembers] = useState([]);
@@ -1208,7 +1531,7 @@ const AttendanceManagement = ({ onNavigate }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-gray-900">Attendance Management</h2>
         <button
           onClick={() => setShowCheckinForm(true)}
@@ -1219,8 +1542,8 @@ const AttendanceManagement = ({ onNavigate }) => {
       </div>
 
       {showCheckinForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-8 rounded-lg max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40 p-4">
+          <div className="bg-white p-6 lg:p-8 rounded-lg max-w-md w-full">
             <h3 className="text-xl font-bold mb-6">Check-in Member</h3>
             <form onSubmit={handleCheckin} className="space-y-4">
               <div>
@@ -1230,7 +1553,7 @@ const AttendanceManagement = ({ onNavigate }) => {
                 <select
                   value={selectedMember}
                   onChange={(e) => setSelectedMember(e.target.value)}
-                  className="w-full p-3 border rounded-lg"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 >
                   <option value="">Select Member</option>
@@ -1241,10 +1564,10 @@ const AttendanceManagement = ({ onNavigate }) => {
                   ))}
                 </select>
               </div>
-              <div className="flex space-x-4">
+              <div className="flex flex-col sm:flex-row gap-4">
                 <button
                   type="submit"
-                  className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700"
+                  className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors"
                 >
                   Check In
                 </button>
@@ -1254,7 +1577,7 @@ const AttendanceManagement = ({ onNavigate }) => {
                     setShowCheckinForm(false);
                     setSelectedMember('');
                   }}
-                  className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+                  className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600 transition-colors"
                 >
                   Cancel
                 </button>
@@ -1265,54 +1588,57 @@ const AttendanceManagement = ({ onNavigate }) => {
       )}
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Member</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-in Time</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-out Time</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {attendance.map((record) => (
-              <tr key={record.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {getMemberName(record.member_id)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {new Date(record.check_in_time).toLocaleTimeString()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {record.check_out_time ? new Date(record.check_out_time).toLocaleTimeString() : 'Still active'}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {new Date(record.date).toLocaleDateString()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  {!record.check_out_time && (
-                    <button
-                      onClick={() => handleCheckout(record.member_id)}
-                      className="text-red-600 hover:text-red-900"
-                    >
-                      Check Out
-                    </button>
-                  )}
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Member</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-in</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">Check-out</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Date</th>
+                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {attendance.map((record) => (
+                <tr key={record.id}>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <div className="truncate max-w-32">{getMemberName(record.member_id)}</div>
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(record.check_in_time).toLocaleTimeString()}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden sm:table-cell">
+                    {record.check_out_time ? new Date(record.check_out_time).toLocaleTimeString() : 'Still active'}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden lg:table-cell">
+                    {new Date(record.date).toLocaleDateString()}
+                  </td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
+                    {!record.check_out_time && (
+                      <button
+                        onClick={() => handleCheckout(record.member_id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        Check Out
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 };
 
-// Main App Component
+// Main App Component (Enhanced with full responsiveness)
 function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const navigation = [
     { id: 'dashboard', name: 'Dashboard', icon: '🏠' },
@@ -1339,87 +1665,120 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="flex">
-        {/* Sidebar */}
-        <div className="w-64 bg-white shadow-lg">
-          <div className="p-6">
-            <h1 className="text-2xl font-bold text-gray-900">FitForce</h1>
-            <p className="text-sm text-gray-600">Professional Gym Management</p>
-          </div>
-          <nav className="mt-6">
-            {navigation.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setCurrentView(item.id)}
-                className={`w-full text-left px-6 py-3 flex items-center space-x-3 hover:bg-gray-50 transition-colors ${
-                  currentView === item.id ? 'bg-blue-50 border-r-4 border-blue-600 text-blue-600' : 'text-gray-700'
-                }`}
-              >
-                <span className="text-xl">{item.icon}</span>
-                <span className="font-medium">{item.name}</span>
-              </button>
-            ))}
-          </nav>
-        </div>
+    <div className="min-h-screen bg-gray-100 flex">
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        ></div>
+      )}
 
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col">
-          {/* Header */}
-          <header className="bg-white shadow-sm border-b border-gray-200 px-8 py-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900 capitalize">
-                  {currentView}
-                </h2>
-              </div>
-              <div className="relative">
-                <button
-                  onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-                  className="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none"
-                >
-                  <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
-                    <span className="text-white font-medium">👤</span>
-                  </div>
-                  <span className="font-medium">Profile</span>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                
-                {showProfileDropdown && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-50">
-                    <div className="py-1">
-                      <button
-                        onClick={() => {
-                          setCurrentView('profile');
-                          setShowProfileDropdown(false);
-                        }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      >
-                        Manage Profile
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentView('dashboard');
-                          setShowProfileDropdown(false);
-                        }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      >
-                        Settings
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+      {/* Sidebar */}
+      <div className={`
+        fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out
+        lg:relative lg:translate-x-0 lg:flex lg:flex-col
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+      `}>
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">FitForce</h1>
+              <p className="text-sm text-gray-600">Professional Gym Management</p>
             </div>
-          </header>
-
-          {/* Content Area */}
-          <main className="flex-1 p-8">
-            {renderContent()}
-          </main>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="lg:hidden text-gray-500 hover:text-gray-700"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
+        <nav className="flex-1 mt-6 overflow-y-auto">
+          {navigation.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setCurrentView(item.id);
+                setSidebarOpen(false);
+              }}
+              className={`w-full text-left px-6 py-3 flex items-center space-x-3 hover:bg-gray-50 transition-colors ${
+                currentView === item.id ? 'bg-blue-50 border-r-4 border-blue-600 text-blue-600' : 'text-gray-700'
+              }`}
+            >
+              <span className="text-xl">{item.icon}</span>
+              <span className="font-medium">{item.name}</span>
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200 px-4 lg:px-8 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden mr-4 text-gray-500 hover:text-gray-700"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <h2 className="text-xl font-semibold text-gray-900 capitalize">
+                {currentView}
+              </h2>
+            </div>
+            <div className="relative">
+              <button
+                onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                className="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none"
+              >
+                <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-medium text-sm">👤</span>
+                </div>
+                <span className="font-medium hidden sm:block">Profile</span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {showProfileDropdown && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-50">
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setCurrentView('profile');
+                        setShowProfileDropdown(false);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Manage Profile
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCurrentView('dashboard');
+                        setShowProfileDropdown(false);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Settings
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <main className="flex-1 p-4 lg:p-8 overflow-auto">
+          {renderContent()}
+        </main>
       </div>
     </div>
   );
