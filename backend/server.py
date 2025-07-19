@@ -590,6 +590,7 @@ async def detect_country(request: Request):
     except Exception as e:
         logging.error(f"Country detection failed: {str(e)}")
         return {"country": "US", "country_name": "United States"}  # Default fallback
+# Stripe Payment Routes
 @api_router.post("/stripe/checkout", response_model=CheckoutSessionResponse)
 async def create_stripe_checkout(request: StripeCheckoutRequest):
     if not stripe_api_key:
