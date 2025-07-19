@@ -194,6 +194,22 @@ class StripeCheckoutRequest(BaseModel):
     success_url: str
     cancel_url: str
 
+class RazorpayOrderRequest(BaseModel):
+    member_id: str
+    membership_type: MembershipType
+    customer_name: str
+    customer_email: str
+    customer_phone: str
+    customer_country: str
+
+class PaymentGatewayResponse(BaseModel):
+    gateway: str  # "stripe" or "razorpay"
+    payment_url: Optional[str] = None  # For Stripe
+    order_id: Optional[str] = None  # For Razorpay
+    amount: float
+    currency: str
+    razorpay_key_id: Optional[str] = None  # Public key for Razorpay frontend
+
 class Attendance(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     member_id: str
