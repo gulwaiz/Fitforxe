@@ -1,3 +1,26 @@
+
+import React, { useEffect, useState } from 'react';
+import { getProfile } from './api';
+
+function Profile() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    getProfile().then(setData).catch(console.error);
+  }, []);
+
+  if (!data) return <div>Loading...</div>;
+
+  return (
+    <div>
+      <h1>{data.gym_name}</h1>
+      <p>Owner: {data.owner_name}</p>
+    </div>
+  );
+}
+
+export default Profile;
+
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import axios from "axios";
