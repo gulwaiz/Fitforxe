@@ -17,10 +17,15 @@ export default function Login({ onSuccess }) {
     setErr("");
     setLoading(true);
     try {
-      const { data } = await axios.post(`${API}/auth/login`, {
-        gym_name: gymName.trim(),
-        email: email.trim(),
-        password,
+      // Build x-www-form-urlencoded body for OAuth2PasswordRequestForm
+      const body = new URLSearchParams();
+      body.append("username", email.trim());
+      body.append("password", password);
+      // Send gym name as the first scope so backend can read it
+      body.append("scope", gymName.trim());
+
+      const { data } = await axios.post(`${API}/auth/login`, body, {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
 
       // Save token & gym for subsequent requests
