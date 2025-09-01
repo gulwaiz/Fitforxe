@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { login } from "./api";
 
 export default function Login({ onSuccess }) {
+  const [gymName, setGymName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -11,10 +12,10 @@ export default function Login({ onSuccess }) {
     e.preventDefault();
     setErr("");
     try {
-      await login(email, password);
+      await login(gymName, email, password); // 👈 pass gymName too
       onSuccess();
     } catch (e) {
-      setErr("Incorrect email or password");
+      setErr("Incorrect gym name, email or password");
     }
   };
 
@@ -22,8 +23,27 @@ export default function Login({ onSuccess }) {
     <div style={{ maxWidth: 380, margin: "60px auto" }}>
       <h2>Owner Login</h2>
       <form onSubmit={submit} style={{ display: "grid", gap: 12 }}>
-        <input placeholder="Email" type="email" value={email} onChange={(e)=>setEmail(e.target.value)} required />
-        <input placeholder="Password" type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required />
+        <input
+          placeholder="Gym Name"
+          type="text"
+          value={gymName}
+          onChange={(e) => setGymName(e.target.value)}
+          required
+        />
+        <input
+          placeholder="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <input
+          placeholder="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
         <button type="submit">Log In</button>
         {err && <div style={{ color: "crimson" }}>{err}</div>}
       </form>
