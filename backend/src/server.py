@@ -1,37 +1,60 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request
-from dotenv import load_dotenv
+# server.py
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from starlette.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
+from jose import jwt, JWTError
+from passlib.hash import bcrypt
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict
-import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
+import uuid
+import os
+import logging
 
+# -------------------- Load env --------------------
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# -------------------- Config ----------------------
+MONGO_URL = os.environ["MONGO_URL"]
+DB_NAME = os.environ["DB_NAME"]
 
-# Stripe configuration
-stripe_api_key = os.environ.get('STRIPE_API_KEY')
-if not stripe_api_key:
-    logging.warning("STRIPE_API_KEY not found in environment variables")
+SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-prod")
+ALGORITHM = "HS256"
+RAW_EXP = os.environ.get("ACCESS_TOKEN_EXPIRES_MINUTES", "0").strip()
+ACCESS_TOKEN_EXPIRES_MINUTES: Optional[int] = None if RAW_EXP in ("", "0", "false", "False", "NONE", "None") else int(RAW_EXP)
 
-# Create the main app without a prefix
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY")
+
+import stripe as stripe_sdk
+if STRIPE_API_KEY:
+    stripe_sdk.api_key = STRIPE_API_KEY
+else:
+    logging.warning("STRIPE_API_KEY not set (Stripe endpoints will error).")
+
+# -------------------- DB -------------------------
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
+
+# -------------------- FastAPI --------------------
 app = FastAPI()
+api = APIRouter(prefix="/api")
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Enums
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+# -------------------- Enums ----------------------
 class MembershipType(str, Enum):
     BASIC = "basic"
     PREMIUM = "premium"
@@ -62,9 +85,26 @@ class PaymentMethodType(str, Enum):
     BANK_TRANSFER = "bank_transfer"
     CHECK = "check"
 
-# Models
+# -------------------- Models ---------------------
+class GymOwnerCreate(BaseModel):
+    email: EmailStr
+    password: str
+    gym_name: str
+
+class GymOwnerOut(BaseModel):
+    id: str
+    email: EmailStr
+    gym_name: str
+    created_at: datetime
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: Optional[int] = None
+
 class GymOwnerProfile(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     gym_name: str = "FitForce"
     owner_name: str
     email: str
@@ -77,6 +117,7 @@ class GymOwnerProfile(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class GymOwnerProfileCreate(BaseModel):
+    gym_name: Optional[str] = "FitForce"
     owner_name: str
     email: str
     phone: str
@@ -97,6 +138,7 @@ class GymOwnerProfileUpdate(BaseModel):
 
 class Member(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     first_name: str
     last_name: str
     email: str
@@ -141,6 +183,7 @@ class MemberUpdate(BaseModel):
 
 class Payment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     member_id: str
     amount: float
     payment_date: datetime
@@ -161,6 +204,7 @@ class PaymentCreate(BaseModel):
 
 class PaymentTransaction(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     member_id: str
     session_id: Optional[str] = None
     payment_id: Optional[str] = None
@@ -173,14 +217,9 @@ class PaymentTransaction(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-class StripeCheckoutRequest(BaseModel):
-    member_id: str
-    membership_type: MembershipType
-    success_url: str
-    cancel_url: str
-
 class Attendance(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     member_id: str
     check_in_time: datetime
     check_out_time: Optional[datetime] = None
@@ -197,488 +236,380 @@ class DashboardStats(BaseModel):
     pending_payments: int
     todays_checkins: int
 
-# Membership pricing
+# -------------------- Pricing --------------------
 MEMBERSHIP_PRICING = {
     MembershipType.BASIC: 29.99,
     MembershipType.PREMIUM: 49.99,
-    MembershipType.VIP: 79.99
+    MembershipType.VIP: 79.99,
 }
 
-# Helper functions
-def calculate_membership_end_date(start_date: datetime, membership_type: MembershipType) -> datetime:
-    # All memberships are monthly
-    return start_date + timedelta(days=30)
+# -------------------- Auth helpers ----------------
+def create_access_token(subject_email: str, owner_id: str) -> str:
+    jti = str(uuid.uuid4())
+    payload = {"sub": subject_email, "owner_id": owner_id, "jti": jti, "iat": int(datetime.utcnow().timestamp())}
+    if ACCESS_TOKEN_EXPIRES_MINUTES is not None:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRES_MINUTES)
+        payload["exp"] = expire
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-# Gym Owner Profile Routes
-@api_router.post("/profile", response_model=GymOwnerProfile)
-async def create_or_update_profile(profile_data: GymOwnerProfileCreate):
-    # Check if profile already exists
-    existing_profile = await db.gym_owner_profile.find_one({})
-    
-    if existing_profile:
-        # Update existing profile
-        update_data = profile_data.dict()
-        update_data["updated_at"] = datetime.utcnow()
-        
-        await db.gym_owner_profile.update_one(
-            {"id": existing_profile["id"]},
-            {"$set": update_data}
-        )
-        
-        updated_profile = await db.gym_owner_profile.find_one({"id": existing_profile["id"]})
-        return GymOwnerProfile(**updated_profile)
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+        # ---- Blacklist check (logout support) ----
+        jti = payload.get("jti")
+        if jti and await db.token_blacklist.find_one({"jti": jti}):
+            raise HTTPException(status_code=401, detail="Token revoked")
+
+        email: str = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user = await db.gym_owners.find_one({"email": email})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# -------------------- AUTH routes -----------------
+@api.post("/auth/register", response_model=GymOwnerOut)
+async def register_owner(data: GymOwnerCreate):
+    existing = await db.gym_owners.find_one({"email": data.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    owner = {
+        "id": str(uuid.uuid4()),
+        "email": data.email,
+        "password_hash": bcrypt.hash(data.password),
+        "gym_name": data.gym_name,
+        "created_at": datetime.utcnow(),
+    }
+    await db.gym_owners.insert_one(owner)
+    return GymOwnerOut(id=owner["id"], email=owner["email"], gym_name=owner["gym_name"], created_at=owner["created_at"])
+
+@api.post("/auth/login", response_model=TokenOut)
+async def login(form: OAuth2PasswordRequestForm = Depends()):
+    """
+    Frontend must send:
+      - username = email
+      - password = password
+      - scope    = gym_name  (we read the first scope)
+    """
+    user = await db.gym_owners.find_one({"email": form.username})
+    gym_from_form = form.scopes[0] if form.scopes else None
+
+    if (
+        not user
+        or not bcrypt.verify(form.password, user["password_hash"])
+        or (gym_from_form and gym_from_form != user["gym_name"])
+    ):
+        raise HTTPException(status_code=400, detail="Incorrect email, password, or gym name")
+
+    token = create_access_token(user["email"], user["id"])
+    return TokenOut(
+        access_token=token,
+        expires_in=None if ACCESS_TOKEN_EXPIRES_MINUTES is None else ACCESS_TOKEN_EXPIRES_MINUTES
+    )
+
+@api.post("/auth/logout")
+async def logout(current=Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+    # blacklist the token (so we can "logout" even if tokens don't expire)
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        jti = payload.get("jti")
+        if jti:
+            await db.token_blacklist.update_one(
+                {"jti": jti},
+                {"$set": {"jti": jti, "revoked_at": datetime.utcnow()}},
+                upsert=True
+            )
+    except JWTError:
+        pass
+    return {"status": "ok"}
+
+# -------------------- Helpers --------------------
+def end_date_from(start: datetime, _type: MembershipType) -> datetime:
+    return start + timedelta(days=30)
+
+# -------------------- Profile (per owner) --------
+@api.post("/profile", response_model=GymOwnerProfile)
+async def create_or_update_profile(body: GymOwnerProfileCreate, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    existing = await db.gym_owner_profile.find_one({"owner_id": owner_id})
+    payload = {**body.dict(), "owner_id": owner_id, "updated_at": datetime.utcnow()}
+    if existing:
+        await db.gym_owner_profile.update_one({"owner_id": owner_id}, {"$set": payload})
+        doc = await db.gym_owner_profile.find_one({"owner_id": owner_id})
+        return GymOwnerProfile(**doc)
     else:
-        # Create new profile
-        profile = GymOwnerProfile(**profile_data.dict())
-        await db.gym_owner_profile.insert_one(profile.dict())
-        return profile
+        doc = GymOwnerProfile(owner_id=owner_id, **body.dict())
+        await db.gym_owner_profile.insert_one(doc.dict())
+        return doc
 
-@api_router.get("/profile", response_model=GymOwnerProfile)
-async def get_profile():
-    profile = await db.gym_owner_profile.find_one({})
-    if not profile:
-        # Return default profile if none exists
+@api.get("/profile", response_model=GymOwnerProfile)
+async def get_profile(current=Depends(get_current_user)):
+    owner_id = current["id"]
+    doc = await db.gym_owner_profile.find_one({"owner_id": owner_id})
+    if not doc:
         return GymOwnerProfile(
-            owner_name="Gym Owner",
-            email="owner@fitforce.com",
+            owner_id=owner_id,
+            owner_name=current.get("gym_name","Owner"),
+            email=current["email"],
             phone="+1-555-0000",
             address="123 Fitness Street",
             city="Gym City",
             state="GY",
-            zip_code="12345"
+            zip_code="12345",
         )
-    return GymOwnerProfile(**profile)
+    return GymOwnerProfile(**doc)
 
-@api_router.put("/profile", response_model=GymOwnerProfile)
-async def update_profile(profile_update: GymOwnerProfileUpdate):
-    existing_profile = await db.gym_owner_profile.find_one({})
-    if not existing_profile:
+@api.put("/profile", response_model=GymOwnerProfile)
+async def update_profile(body: GymOwnerProfileUpdate, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    existing = await db.gym_owner_profile.find_one({"owner_id": owner_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Profile not found")
-    
-    update_data = {k: v for k, v in profile_update.dict().items() if v is not None}
+    update_data = {k: v for k, v in body.dict().items() if v is not None}
     update_data["updated_at"] = datetime.utcnow()
-    
-    await db.gym_owner_profile.update_one(
-        {"id": existing_profile["id"]},
-        {"$set": update_data}
-    )
-    
-    updated_profile = await db.gym_owner_profile.find_one({"id": existing_profile["id"]})
-    return GymOwnerProfile(**updated_profile)
-@api_router.post("/members", response_model=Member)
-async def create_member(member_data: MemberCreate):
-    # Check if email already exists
-    existing_member = await db.members.find_one({"email": member_data.email})
-    if existing_member:
+    await db.gym_owner_profile.update_one({"owner_id": owner_id}, {"$set": update_data})
+    doc = await db.gym_owner_profile.find_one({"owner_id": owner_id})
+    return GymOwnerProfile(**doc)
+
+# -------------------- Members --------------------
+@api.post("/members", response_model=Member)
+async def create_member(body: MemberCreate, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    existing = await db.members.find_one({"owner_id": owner_id, "email": body.email})
+    if existing:
         raise HTTPException(status_code=400, detail="Member with this email already exists")
-    
-    # Calculate membership dates
-    start_date = datetime.utcnow()
-    end_date = calculate_membership_end_date(start_date, member_data.membership_type)
-    
-    member_dict = member_data.dict()
-    member_dict.update({
-        "membership_start_date": start_date,
-        "membership_end_date": end_date,
-        "status": MemberStatus.ACTIVE
-    })
-    
-    # Remove enable_auto_billing from member_dict and set auto_billing_enabled
-    enable_auto_billing = member_dict.pop("enable_auto_billing", False)
-    member_dict["auto_billing_enabled"] = enable_auto_billing
-    
-    member = Member(**member_dict)
+    start = datetime.utcnow()
+    end = end_date_from(start, body.membership_type)
+    data = body.dict()
+    enable_auto = data.pop("enable_auto_billing", False)
+    member = Member(owner_id=owner_id, membership_start_date=start, membership_end_date=end,
+                    auto_billing_enabled=enable_auto, **data)
     await db.members.insert_one(member.dict())
     return member
 
-@api_router.get("/members", response_model=List[Member])
-async def get_members(skip: int = 0, limit: int = 100, status: Optional[MemberStatus] = None):
-    query = {}
-    if status:
-        query["status"] = status
-    
-    members = await db.members.find(query).skip(skip).limit(limit).to_list(limit)
-    return [Member(**member) for member in members]
+@api.get("/members", response_model=List[Member])
+async def get_members(skip: int = 0, limit: int = 100, status: Optional[MemberStatus] = None, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    q = {"owner_id": owner_id}
+    if status: q["status"] = status
+    docs = await db.members.find(q).skip(skip).limit(limit).to_list(limit)
+    return [Member(**d) for d in docs]
 
-@api_router.get("/members/{member_id}", response_model=Member)
-async def get_member(member_id: str):
-    member = await db.members.find_one({"id": member_id})
-    if not member:
+@api.get("/members/{member_id}", response_model=Member)
+async def get_member(member_id: str, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    m = await db.members.find_one({"owner_id": owner_id, "id": member_id})
+    if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    return Member(**member)
+    return Member(**m)
 
-@api_router.put("/members/{member_id}", response_model=Member)
-async def update_member(member_id: str, member_update: MemberUpdate):
-    member = await db.members.find_one({"id": member_id})
-    if not member:
+@api.put("/members/{member_id}", response_model=Member)
+async def update_member(member_id: str, body: MemberUpdate, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    m = await db.members.find_one({"owner_id": owner_id, "id": member_id})
+    if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    
-    update_data = {k: v for k, v in member_update.dict().items() if v is not None}
-    update_data["updated_at"] = datetime.utcnow()
-    
-    await db.members.update_one({"id": member_id}, {"$set": update_data})
-    updated_member = await db.members.find_one({"id": member_id})
-    return Member(**updated_member)
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    upd["updated_at"] = datetime.utcnow()
+    await db.members.update_one({"owner_id": owner_id, "id": member_id}, {"$set": upd})
+    m2 = await db.members.find_one({"owner_id": owner_id, "id": member_id})
+    return Member(**m2)
 
-@api_router.delete("/members/{member_id}")
-async def delete_member(member_id: str):
-    member = await db.members.find_one({"id": member_id})
-    if not member:
+@api.delete("/members/{member_id}")
+async def delete_member(member_id: str, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    m = await db.members.find_one({"owner_id": owner_id, "id": member_id})
+    if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    
-    await db.members.delete_one({"id": member_id})
+    await db.members.delete_one({"owner_id": owner_id, "id": member_id})
     return {"message": "Member deleted successfully"}
 
-# Stripe Payment Routes
-@api_router.post("/stripe/checkout", response_model=CheckoutSessionResponse)
-async def create_stripe_checkout(request: StripeCheckoutRequest):
-    if not stripe_api_key:
+# -------------------- Stripe (simple checkout) ---
+class CheckoutSessionRequest(BaseModel):
+    member_id: str
+    membership_type: MembershipType
+    success_url: str
+    cancel_url: str
+
+class CheckoutSessionResponse(BaseModel):
+    session_id: str
+    url: str
+
+class CheckoutStatusResponse(BaseModel):
+    payment_status: str
+
+@api.post("/stripe/checkout", response_model=CheckoutSessionResponse)
+async def stripe_checkout(req: CheckoutSessionRequest, current=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
         raise HTTPException(status_code=500, detail="Stripe is not configured")
-    
-    # Verify member exists
-    member = await db.members.find_one({"id": request.member_id})
+    owner_id = current["id"]
+    member = await db.members.find_one({"owner_id": owner_id, "id": req.member_id})
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    
-    # Initialize Stripe checkout
-    host_url = request.success_url.split('/')[0] + '//' + request.success_url.split('/')[2]
-    webhook_url = f"{host_url}/api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
-    
-    # Get pricing
-    amount = MEMBERSHIP_PRICING[request.membership_type]
-    
-    # Create checkout session
-    checkout_request = CheckoutSessionRequest(
-        amount=amount,
-        currency="usd",
-        success_url=request.success_url,
-        cancel_url=request.cancel_url,
-        metadata={
-            "member_id": request.member_id,
-            "membership_type": request.membership_type,
-            "gym_name": "FitForce"
-        }
-    )
-    
-    session = await stripe_checkout.create_checkout_session(checkout_request)
-    
-    # Create payment transaction record
-    payment_transaction = PaymentTransaction(
-        member_id=request.member_id,
-        session_id=session.session_id,
+    amount = MEMBERSHIP_PRICING[req.membership_type]
+
+    def _create():
+        return stripe_sdk.checkout.Session.create(
+            mode="payment",
+            line_items=[{
+                "price_data": {"currency": "usd", "product_data": {"name": f"{req.membership_type.value.capitalize()} Membership"}, "unit_amount": int(amount * 100)},
+                "quantity": 1
+            }],
+            success_url=req.success_url + "?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=req.cancel_url,
+            metadata={"owner_id": owner_id, "member_id": req.member_id, "membership_type": req.membership_type.value},
+        )
+    import anyio
+    sess = await anyio.to_thread.run_sync(_create)
+
+    txn = PaymentTransaction(
+        owner_id=owner_id,
+        member_id=req.member_id,
+        session_id=sess.id,
         amount=amount,
         currency="usd",
         payment_method=PaymentMethodType.STRIPE,
         status=PaymentTransactionStatus.INITIATED,
-        membership_type=request.membership_type,
-        metadata=checkout_request.metadata
+        membership_type=req.membership_type,
+        metadata={"gateway": "stripe"},
     )
-    
-    await db.payment_transactions.insert_one(payment_transaction.dict())
-    
-    return session
+    await db.payment_transactions.insert_one(txn.dict())
+    return CheckoutSessionResponse(session_id=sess.id, url=sess.url)
 
-@api_router.get("/stripe/checkout/status/{session_id}")
-async def get_stripe_checkout_status(session_id: str):
-    if not stripe_api_key:
+@api.get("/stripe/checkout/status/{session_id}", response_model=CheckoutStatusResponse)
+async def stripe_status(session_id: str, current=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
         raise HTTPException(status_code=500, detail="Stripe is not configured")
-    
-    # Initialize Stripe checkout
-    stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url="")
-    
-    # Get checkout status
-    status = await stripe_checkout.get_checkout_status(session_id)
-    
-    # Update payment transaction
-    payment_transaction = await db.payment_transactions.find_one({"session_id": session_id})
-    if payment_transaction:
-        if status.payment_status == "paid" and payment_transaction["status"] != PaymentTransactionStatus.COMPLETED:
-            # Update transaction status
-            await db.payment_transactions.update_one(
-                {"session_id": session_id},
-                {"$set": {
-                    "status": PaymentTransactionStatus.COMPLETED,
-                    "updated_at": datetime.utcnow()
-                }}
-            )
-            
-            # Create payment record
-            payment = Payment(
-                member_id=payment_transaction["member_id"],
-                amount=payment_transaction["amount"],
+    def _retrieve():
+        return stripe_sdk.checkout.Session.retrieve(session_id)
+    import anyio
+    sess = await anyio.to_thread.run_sync(_retrieve)
+    status_val = sess.get("payment_status") or sess.get("status") or "unknown"
+    if status_val == "paid":
+        txn = await db.payment_transactions.find_one({"session_id": session_id})
+        if txn and txn["status"] != PaymentTransactionStatus.COMPLETED:
+            await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"status": PaymentTransactionStatus.COMPLETED, "updated_at": datetime.utcnow()}})
+            pay = Payment(
+                owner_id=txn["owner_id"],
+                member_id=txn["member_id"],
+                amount=txn["amount"],
                 payment_date=datetime.utcnow(),
                 payment_method="stripe",
                 status=PaymentStatus.PAID,
-                membership_type=payment_transaction["membership_type"],
+                membership_type=txn["membership_type"],
                 period_start=datetime.utcnow(),
-                period_end=calculate_membership_end_date(datetime.utcnow(), payment_transaction["membership_type"]),
-                notes="Stripe payment processed"
+                period_end=end_date_from(datetime.utcnow(), txn["membership_type"]),
+                notes="Stripe payment processed",
             )
-            
-            await db.payments.insert_one(payment.dict())
-            
-            # Update member's membership end date
-            await db.members.update_one(
-                {"id": payment_transaction["member_id"]},
-                {"$set": {
-                    "membership_end_date": payment.period_end,
-                    "status": MemberStatus.ACTIVE,
-                    "auto_billing_enabled": True
-                }}
-            )
-    
-    return status
+            await db.payments.insert_one(pay.dict())
+            await db.members.update_one({"id": txn["member_id"], "owner_id": txn["owner_id"]},
+                                        {"$set": {"membership_end_date": pay.period_end, "status": MemberStatus.ACTIVE, "auto_billing_enabled": True}})
+    return CheckoutStatusResponse(payment_status=status_val)
 
-@api_router.post("/webhook/stripe")
-async def handle_stripe_webhook(request: Request):
-    if not stripe_api_key:
-        raise HTTPException(status_code=500, detail="Stripe is not configured")
-    
-    # Initialize Stripe checkout
-    stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url="")
-    
-    # Get webhook data
-    webhook_body = await request.body()
-    stripe_signature = request.headers.get("Stripe-Signature")
-    
-    try:
-        webhook_response = await stripe_checkout.handle_webhook(webhook_body, stripe_signature)
-        
-        if webhook_response.event_type == "checkout.session.completed":
-            session_id = webhook_response.session_id
-            
-            # Update payment transaction
-            payment_transaction = await db.payment_transactions.find_one({"session_id": session_id})
-            if payment_transaction and payment_transaction["status"] != PaymentTransactionStatus.COMPLETED:
-                await db.payment_transactions.update_one(
-                    {"session_id": session_id},
-                    {"$set": {
-                        "status": PaymentTransactionStatus.COMPLETED,
-                        "updated_at": datetime.utcnow()
-                    }}
-                )
-                
-                # Create payment record and update member (same logic as above)
-                payment = Payment(
-                    member_id=payment_transaction["member_id"],
-                    amount=payment_transaction["amount"],
-                    payment_date=datetime.utcnow(),
-                    payment_method="stripe",
-                    status=PaymentStatus.PAID,
-                    membership_type=payment_transaction["membership_type"],
-                    period_start=datetime.utcnow(),
-                    period_end=calculate_membership_end_date(datetime.utcnow(), payment_transaction["membership_type"]),
-                    notes="Stripe webhook processed"
-                )
-                
-                await db.payments.insert_one(payment.dict())
-                
-                await db.members.update_one(
-                    {"id": payment_transaction["member_id"]},
-                    {"$set": {
-                        "membership_end_date": payment.period_end,
-                        "status": MemberStatus.ACTIVE,
-                        "auto_billing_enabled": True
-                    }}
-                )
-        
-        return {"status": "success"}
-        
-    except Exception as e:
-        logging.error(f"Webhook error: {str(e)}")
-        raise HTTPException(status_code=400, detail="Webhook processing failed")
-@api_router.post("/payments", response_model=Payment)
-async def create_payment(payment_data: PaymentCreate):
-    # Verify member exists
-    member = await db.members.find_one({"id": payment_data.member_id})
+# -------------------- Payments -------------------
+@api.post("/payments", response_model=Payment)
+async def create_payment(body: PaymentCreate, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    member = await db.members.find_one({"owner_id": owner_id, "id": body.member_id})
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    
-    # Calculate payment period
-    payment_date = datetime.utcnow()
-    period_start = payment_date
-    period_end = calculate_membership_end_date(period_start, payment_data.membership_type)
-    
-    payment_dict = payment_data.dict()
-    payment_dict.update({
-        "payment_date": payment_date,
-        "status": PaymentStatus.PAID,
-        "period_start": period_start,
-        "period_end": period_end
-    })
-    
-    payment = Payment(**payment_dict)
-    await db.payments.insert_one(payment.dict())
-    
-    # Update member's membership end date
-    await db.members.update_one(
-        {"id": payment_data.member_id},
-        {"$set": {"membership_end_date": period_end, "status": MemberStatus.ACTIVE}}
+    now = datetime.utcnow()
+    period_end = end_date_from(now, body.membership_type)
+    pay = Payment(
+        owner_id=owner_id,
+        member_id=body.member_id,
+        amount=body.amount,
+        payment_date=now,
+        payment_method=body.payment_method,
+        status=PaymentStatus.PAID,
+        membership_type=body.membership_type,
+        period_start=now,
+        period_end=period_end,
+        notes=body.notes,
     )
-    
-    return payment
+    await db.payments.insert_one(pay.dict())
+    await db.members.update_one({"id": body.member_id, "owner_id": owner_id},
+                                {"$set": {"membership_end_date": period_end, "status": MemberStatus.ACTIVE}})
+    return pay
 
-@api_router.get("/payments", response_model=List[Payment])
-async def get_payments(skip: int = 0, limit: int = 100, member_id: Optional[str] = None):
-    query = {}
-    if member_id:
-        query["member_id"] = member_id
-    
-    payments = await db.payments.find(query).sort("payment_date", -1).skip(skip).limit(limit).to_list(limit)
-    return [Payment(**payment) for payment in payments]
+@api.get("/payments", response_model=List[Payment])
+async def get_payments(skip: int = 0, limit: int = 100, member_id: Optional[str] = None, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    q = {"owner_id": owner_id}
+    if member_id: q["member_id"] = member_id
+    docs = await db.payments.find(q).sort("payment_date", -1).skip(skip).limit(limit).to_list(limit)
+    return [Payment(**d) for d in docs]
 
-@api_router.get("/payments/member/{member_id}", response_model=List[Payment])
-async def get_member_payments(member_id: str):
-    payments = await db.payments.find({"member_id": member_id}).sort("payment_date", -1).to_list(100)
-    return [Payment(**payment) for payment in payments]
-
-# Attendance Routes
-@api_router.post("/attendance/checkin", response_model=Attendance)
-async def check_in_member(attendance_data: AttendanceCreate):
-    # Verify member exists
-    member = await db.members.find_one({"id": attendance_data.member_id})
+# -------------------- Attendance -----------------
+@api.post("/attendance/checkin", response_model=Attendance)
+async def check_in(body: AttendanceCreate, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    member = await db.members.find_one({"owner_id": owner_id, "id": body.member_id})
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    
-    # Check if already checked in today
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    existing_attendance = await db.attendance.find_one({
-        "member_id": attendance_data.member_id,
-        "date": today,
-        "check_out_time": None
-    })
-    
-    if existing_attendance:
+    existing = await db.attendance.find_one({"owner_id": owner_id, "member_id": body.member_id, "date": today, "check_out_time": None})
+    if existing:
         raise HTTPException(status_code=400, detail="Member already checked in today")
-    
-    attendance = Attendance(
-        member_id=attendance_data.member_id,
-        check_in_time=datetime.utcnow(),
-        date=today
-    )
-    
-    await db.attendance.insert_one(attendance.dict())
-    return attendance
+    rec = Attendance(owner_id=owner_id, member_id=body.member_id, check_in_time=datetime.utcnow(), date=today)
+    await db.attendance.insert_one(rec.dict())
+    return rec
 
-@api_router.post("/attendance/checkout/{member_id}")
-async def check_out_member(member_id: str):
+@api.post("/attendance/checkout/{member_id}")
+async def check_out(member_id: str, current=Depends(get_current_user)):
+    owner_id = current["id"]
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    attendance = await db.attendance.find_one({
-        "member_id": member_id,
-        "date": today,
-        "check_out_time": None
-    })
-    
-    if not attendance:
+    rec = await db.attendance.find_one({"owner_id": owner_id, "member_id": member_id, "date": today, "check_out_time": None})
+    if not rec:
         raise HTTPException(status_code=404, detail="No active check-in found for today")
-    
-    await db.attendance.update_one(
-        {"id": attendance["id"]},
-        {"$set": {"check_out_time": datetime.utcnow()}}
-    )
-    
+    await db.attendance.update_one({"id": rec["id"]}, {"$set": {"check_out_time": datetime.utcnow()}})
     return {"message": "Member checked out successfully"}
 
-@api_router.get("/attendance", response_model=List[Attendance])
-async def get_attendance(skip: int = 0, limit: int = 100, date: Optional[datetime] = None):
-    query = {}
-    if date:
-        query["date"] = date.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    attendance_records = await db.attendance.find(query).sort("check_in_time", -1).skip(skip).limit(limit).to_list(limit)
-    return [Attendance(**record) for record in attendance_records]
+@api.get("/attendance", response_model=List[Attendance])
+async def list_attendance(skip: int = 0, limit: int = 100, current=Depends(get_current_user)):
+    owner_id = current["id"]
+    docs = await db.attendance.find({"owner_id": owner_id}).sort("check_in_time", -1).skip(skip).limit(limit).to_list(limit)
+    return [Attendance(**d) for d in docs]
 
-# Dashboard Routes
-@api_router.get("/dashboard/stats", response_model=DashboardStats)
-async def get_dashboard_stats():
-    # Total members
-    total_members = await db.members.count_documents({})
-    
-    # Active members
-    active_members = await db.members.count_documents({"status": MemberStatus.ACTIVE})
-    
-    # Monthly revenue (current month)
-    current_month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    monthly_payments = await db.payments.find({
-        "payment_date": {"$gte": current_month_start},
-        "status": PaymentStatus.PAID
-    }).to_list(1000)
-    monthly_revenue = sum(payment["amount"] for payment in monthly_payments)
-    
-    # Pending payments (members with expired memberships)
+# -------------------- Dashboard ------------------
+@api.get("/dashboard/stats", response_model=DashboardStats)
+async def stats(current=Depends(get_current_user)):
+    owner_id = current["id"]
+    total = await db.members.count_documents({"owner_id": owner_id})
+    active = await db.members.count_documents({"owner_id": owner_id, "status": MemberStatus.ACTIVE})
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    pays = await db.payments.find({"owner_id": owner_id, "payment_date": {"$gte": month_start}, "status": PaymentStatus.PAID}).to_list(1000)
+    revenue = sum(p["amount"] for p in pays)
     now = datetime.utcnow()
-    expired_members = await db.members.count_documents({
-        "membership_end_date": {"$lt": now},
-        "status": MemberStatus.ACTIVE
-    })
-    
-    # Today's check-ins
+    expired = await db.members.count_documents({"owner_id": owner_id, "membership_end_date": {"$lt": now}, "status": MemberStatus.ACTIVE})
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    todays_checkins = await db.attendance.count_documents({"date": today})
-    
-    return DashboardStats(
-        total_members=total_members,
-        active_members=active_members,
-        monthly_revenue=monthly_revenue,
-        pending_payments=expired_members,
-        todays_checkins=todays_checkins
-    )
+    todays = await db.attendance.count_documents({"owner_id": owner_id, "date": today})
+    return DashboardStats(total_members=total, active_members=active, monthly_revenue=revenue, pending_payments=expired, todays_checkins=todays)
 
-@api_router.get("/membership-pricing")
+# -------------------- Utility --------------------
+@api.get("/membership-pricing")
 async def get_membership_pricing():
     return MEMBERSHIP_PRICING
 
-class LoginRequest(BaseModel):
-    gym_name: str
-    email: str
-    password: str
+@api.get("/detect-country")
+async def detect_country(request: Request):
+    try:
+        ip = request.client.host or ""
+        if ip.startswith(("127.0.0.", "::1", "192.168.")):
+            return {"country": "IN", "country_name": "India"}
+        return {"country": "US", "country_name": "United States"}
+    except Exception as e:
+        logging.error(f"detect-country error: {e}")
+        return {"country": "US", "country_name": "United States"}
 
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+# -------------------- Register router ------------
+app.include_router(api)
 
-def create_access_token(data: dict) -> str:
-    import jwt
-    from datetime import datetime, timedelta
-
-    SECRET_KEY = os.environ.get("JWT_SECRET", "supersecret")
-    ALGORITHM = "HS256"
-    expire = datetime.utcnow() + timedelta(days=30)  # token lasts 30 days
-    data.update({"exp": expire})
-    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
-
-@api_router.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
-    owner = await db.gym_owner_profile.find_one({
-        "gym_name": request.gym_name,
-        "email": request.email,
-        "password": request.password  # for now plain text
-    })
-    if not owner:
-        raise HTTPException(status_code=401, detail="Invalid gym name, email, or password")
-
-    token = create_access_token({"sub": owner["email"], "gym_id": owner["id"]})
-    return {"access_token": token, "token_type": "bearer"}
-
-# Include the router in the main app
-app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
+# -------------------- Shutdown -------------------
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown_db():
     client.close()
