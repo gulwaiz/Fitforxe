@@ -316,11 +316,22 @@ async def register_owner(data: GymOwnerCreate):
 @api.post("/auth/login", response_model=TokenOut)
 async def login(form: OAuth2PasswordRequestForm = Depends()):
     user = await db.gym_owners.find_one({"email": form.username})
-    if not user or not bcrypt.verify(form.password, user["password_hash"]):
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
-    token = create_access_token(user["email"], user["id"])
-    return TokenOut(access_token=token, expires_in=None if ACCESS_TOKEN_EXPIRES_MINUTES is None else ACCESS_TOKEN_EXPIRES_MINUTES)
+    # take gym name from first scope (we send it from the frontend)
+    gym_from_form = form.scopes[0] if form.scopes else None
 
+    if (
+        not user
+        or not bcrypt.verify(form.password, user["password_hash"])
+        or (gym_from_form and gym_from_form != user["gym_name"])
+    ):
+        raise HTTPException(status_code=400, detail="Incorrect email, password, or gym name")
+
+    token = create_access_token(user["email"], user["id"])
+    return TokenOut(
+        access_token=token,
+        expires_in=None if ACCESS_TOKEN_EXPIRES_MINUTES is None else ACCESS_TOKEN_EXPIRES_MINUTES
+    )
+    
 @api.post("/auth/logout")
 async def logout(current=Depends(get_current_user), token: str = Depends(oauth2_scheme)):
     try:
