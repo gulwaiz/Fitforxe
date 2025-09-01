@@ -629,6 +629,38 @@ async def get_dashboard_stats():
 async def get_membership_pricing():
     return MEMBERSHIP_PRICING
 
+class LoginRequest(BaseModel):
+    gym_name: str
+    email: str
+    password: str
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+def create_access_token(data: dict) -> str:
+    import jwt
+    from datetime import datetime, timedelta
+
+    SECRET_KEY = os.environ.get("JWT_SECRET", "supersecret")
+    ALGORITHM = "HS256"
+    expire = datetime.utcnow() + timedelta(days=30)  # token lasts 30 days
+    data.update({"exp": expire})
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+@api_router.post("/auth/login", response_model=LoginResponse)
+async def login(request: LoginRequest):
+    owner = await db.gym_owner_profile.find_one({
+        "gym_name": request.gym_name,
+        "email": request.email,
+        "password": request.password  # for now plain text
+    })
+    if not owner:
+        raise HTTPException(status_code=401, detail="Invalid gym name, email, or password")
+
+    token = create_access_token({"sub": owner["email"], "gym_id": owner["id"]})
+    return {"access_token": token, "token_type": "bearer"}
+
 # Include the router in the main app
 app.include_router(api_router)
 
