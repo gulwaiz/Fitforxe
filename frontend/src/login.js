@@ -17,23 +17,18 @@ export default function Login({ onSuccess }) {
     setErr("");
     setLoading(true);
     try {
-      // Build x-www-form-urlencoded body for OAuth2PasswordRequestForm
-      const body = new URLSearchParams();
-      body.append("username", email.trim());
-      body.append("password", password);
-      // Send gym name as the first scope so backend can read it
-      body.append("scope", gymName.trim());
-
-      const { data } = await axios.post(`${API}/auth/login`, body, {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      const { data } = await axios.post(`${API}/auth/login`, {
+        gym_name: gymName.trim(),
+        email: email.trim(),
+        password,
       });
 
-      // Save token & gym for subsequent requests
+      // Save token & gym for later requests
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("gym_name", gymName.trim());
       axios.defaults.headers.common.Authorization = `Bearer ${data.access_token}`;
 
-      onSuccess(); // tell App we’re logged in
+      onSuccess(); // notify App we’re logged in
     } catch (e) {
       setErr(e?.response?.data?.detail || "Incorrect gym name, email, or password");
     } finally {
@@ -72,7 +67,6 @@ export default function Login({ onSuccess }) {
             value={gymName}
             onChange={(e) => setGymName(e.target.value)}
             required
-            autoCapitalize="none"
             style={inputStyle}
           />
           <input
@@ -81,7 +75,6 @@ export default function Login({ onSuccess }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            autoCapitalize="none"
             style={inputStyle}
           />
           <input
