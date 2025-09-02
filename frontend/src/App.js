@@ -5,8 +5,8 @@ import axios from "axios";
 /** =========================
  *  API base + axios instance
  *  ========================= */
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API_BASE = `${BACKEND_URL}/api`;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
+const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api` : "/api";
 
 const api = axios.create({ baseURL: API_BASE });
 
@@ -16,8 +16,6 @@ api.interceptors.request.use((config) => {
   if (t) config.headers.Authorization = `Bearer ${t}`;
   return config;
 });
-
-
 
 /** =========================
  *  Small Auth helpers
@@ -31,8 +29,6 @@ function clearToken() {
 function getToken() {
   return localStorage.getItem("token");
 }
-
-
 
 /** =========================
  *  Checkout Page Component
@@ -58,17 +54,17 @@ const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
 
   useEffect(() => {
     detectCountry();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const detectCountry = async () => {
     try {
       const response = await api.get(`/detect-country`);
-      const country = response.data.country;
+      const country = response?.data?.country || "US";
       setUserCountry(country);
       setFormData((prev) => ({ ...prev, country }));
       setPaymentGateway(country === "IN" ? "razorpay" : "stripe");
-    } catch (error) {
-      console.error("Error detecting country:", error);
+    } catch {
       setPaymentGateway("stripe");
     }
   };
@@ -83,14 +79,14 @@ const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
       } else {
         await processStripePayment();
       }
-    } catch (error) {
-      console.error("Payment error:", error);
+    } catch {
       setPaymentStatus({
         type: "error",
         message: "Payment processing failed. Please try again.",
       });
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const processRazorpayPayment = async () => {
@@ -99,15 +95,17 @@ const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
       let memberId = memberData?.id;
       if (!memberId) {
         const memberResponse = await api.post(`/members`, {
-          first_name: formData.name.split(" ")[0],
-          last_name: formData.name.split(" ").slice(1).join(" ") || "Member",
+          first_name: (formData.name || "").split(" ")[0] || "Member",
+          last_name: (formData.name || "").split(" ").slice(1).join(" ") || "Member",
           email: formData.email,
           phone: formData.phone,
           membership_type: formData.membership_plan,
           enable_auto_billing: true,
         });
-        memberId = memberResponse.data.id;
+        memberId = memberResponse?.data?.id;
       }
+
+      if (!memberId) throw new Error("Member creation failed");
 
       // Create Razorpay order
       const orderResponse = await api.post(`/razorpay/create-order`, {
@@ -119,11 +117,11 @@ const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
         customer_country: formData.country,
       });
 
-      const { order_id, amount, razorpay_key_id } = orderResponse.data;
+      const { order_id, amount, razorpay_key_id } = orderResponse?.data || {};
 
       const options = {
         key: razorpay_key_id,
-        amount: amount * 100,
+        amount: Number(amount || 0) * 100,
         currency: "INR",
         name: "FitForce Gym",
         description: `${membershipPlans[formData.membership_plan].name} Membership`,
@@ -166,15 +164,17 @@ const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
       let memberId = memberData?.id;
       if (!memberId) {
         const memberResponse = await api.post(`/members`, {
-          first_name: formData.name.split(" ")[0],
-          last_name: formData.name.split(" ").slice(1).join(" ") || "Member",
+          first_name: (formData.name || "").split(" ")[0] || "Member",
+          last_name: (formData.name || "").split(" ").slice(1).join(" ") || "Member",
           email: formData.email,
           phone: formData.phone,
           membership_type: formData.membership_plan,
           enable_auto_billing: true,
         });
-        memberId = memberResponse.data.id;
+        memberId = memberResponse?.data?.id;
       }
+
+      if (!memberId) throw new Error("Member creation failed");
 
       const currentUrl = window.location.origin + window.location.pathname;
       const stripeResponse = await api.post(`/stripe/checkout`, {
@@ -184,7 +184,7 @@ const CheckoutPage = ({ memberData, onNavigate, onClose }) => {
         cancel_url: `${currentUrl}?payment_cancelled=true`,
       });
 
-      window.location.href = stripeResponse.data.url;
+      window.location.href = stripeResponse?.data?.url;
     } catch (error) {
       console.error("Stripe payment error:", error);
       throw error;
@@ -425,21 +425,23 @@ const ProfileManagement = ({ onNavigate }) => {
 
   useEffect(() => {
     fetchProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchProfile = async () => {
     try {
       const response = await api.get(`/profile`);
-      setProfile(response.data);
+      const p = response?.data || {};
+      setProfile(p);
       setFormData({
-        gym_name: response.data.gym_name || "FitForce",
-        owner_name: response.data.owner_name || "",
-        email: response.data.email || "",
-        phone: response.data.phone || "",
-        address: response.data.address || "",
-        city: response.data.city || "",
-        state: response.data.state || "",
-        zip_code: response.data.zip_code || "",
+        gym_name: p.gym_name || "FitForce",
+        owner_name: p.owner_name || "",
+        email: p.email || "",
+        phone: p.phone || "",
+        address: p.address || "",
+        city: p.city || "",
+        state: p.state || "",
+        zip_code: p.zip_code || "",
       });
     } catch (error) {
       console.error("Error fetching profile:", error);
@@ -525,22 +527,22 @@ const ProfileManagement = ({ onNavigate }) => {
                     <span className="font-medium">Gym Name:</span> {profile?.gym_name || "FitForce"}
                   </p>
                   <p>
-                    <span className="font-medium">Owner:</span> {profile.owner_name}
+                    <span className="font-medium">Owner:</span> {profile?.owner_name || "-"}
                   </p>
                   <p>
-                    <span className="font-medium">Email:</span> {profile.email}
+                    <span className="font-medium">Email:</span> {profile?.email || "-"}
                   </p>
                   <p>
-                    <span className="font-medium">Phone:</span> {profile.phone}
+                    <span className="font-medium">Phone:</span> {profile?.phone || "-"}
                   </p>
                 </div>
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Address</h3>
                 <div className="space-y-2">
-                  <p>{profile.address}</p>
+                  <p>{profile?.address || "-"}</p>
                   <p>
-                    {profile.city}, {profile.state} {profile.zip_code}
+                    {(profile?.city || "-")}, {(profile?.state || "-")} {(profile?.zip_code || "-")}
                   </p>
                 </div>
               </div>
@@ -580,12 +582,13 @@ const MemberManagement = ({ onNavigate }) => {
   useEffect(() => {
     fetchMembers();
     fetchMembershipPricing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchMembers = async () => {
     try {
       const response = await api.get(`/members`);
-      setMembers(response.data);
+      setMembers(response?.data || []);
     } catch (error) {
       console.error("Error fetching members:", error);
     }
@@ -594,7 +597,7 @@ const MemberManagement = ({ onNavigate }) => {
   const fetchMembershipPricing = async () => {
     try {
       const response = await api.get(`/membership-pricing`);
-      setMembershipPricing(response.data);
+      setMembershipPricing(response?.data || {});
     } catch (error) {
       console.error("Error fetching pricing:", error);
     }
@@ -602,7 +605,7 @@ const MemberManagement = ({ onNavigate }) => {
 
   // Credit card helpers (kept for UI only)
   const formatCardNumber = (value) => {
-    const v = value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
+    const v = (value || "").replace(/\s+/g, "").replace(/[^0-9]/gi, "");
     const matches = v.match(/\d{4,16}/g);
     const match = (matches && matches[0]) || "";
     const parts = [];
@@ -610,14 +613,14 @@ const MemberManagement = ({ onNavigate }) => {
     return parts.length ? parts.join(" ") : v;
   };
   const formatExpiryDate = (value) => {
-    const v = value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
+    const v = (value || "").replace(/\s+/g, "").replace(/[^0-9]/gi, "");
     return v.length >= 2 ? v.substring(0, 2) + "/" + v.substring(2, 4) : v;
   };
   const handleCardInputChange = (field, value) => {
     let formattedValue = value;
     if (field === "card_number") formattedValue = formatCardNumber(value);
     else if (field === "expiry_date") formattedValue = formatExpiryDate(value);
-    else if (field === "cvv") formattedValue = value.replace(/[^0-9]/g, "");
+    else if (field === "cvv") formattedValue = String(value || "").replace(/[^0-9]/g, "");
     setFormData({ ...formData, [field]: formattedValue });
   };
 
@@ -664,15 +667,15 @@ const MemberManagement = ({ onNavigate }) => {
   const handleEdit = (member) => {
     setEditingMember(member);
     setFormData({
-      first_name: member.first_name,
-      last_name: member.last_name,
-      email: member.email,
-      phone: member.phone,
-      membership_type: member.membership_type,
-      emergency_contact_name: member.emergency_contact_name || "",
-      emergency_contact_phone: member.emergency_contact_phone || "",
-      medical_conditions: member.medical_conditions || "",
-      enable_auto_billing: member.auto_billing_enabled || false,
+      first_name: member?.first_name || "",
+      last_name: member?.last_name || "",
+      email: member?.email || "",
+      phone: member?.phone || "",
+      membership_type: member?.membership_type || "basic",
+      emergency_contact_name: member?.emergency_contact_name || "",
+      emergency_contact_phone: member?.emergency_contact_phone || "",
+      medical_conditions: member?.medical_conditions || "",
+      enable_auto_billing: !!member?.auto_billing_enabled,
       card_holder_name: "",
       card_number: "",
       expiry_date: "",
@@ -714,7 +717,7 @@ const MemberManagement = ({ onNavigate }) => {
       case "premium":
         return "bg-purple-100 text-purple-800";
       case "vip":
-        return "bg-gold-100 text-gold-800";
+        return "bg-yellow-100 text-yellow-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -731,7 +734,7 @@ const MemberManagement = ({ onNavigate }) => {
 
       {showCheckout && (
         <CheckoutPage
-          memberData={{ name: `${formData.first_name} ${formData.last_name}`, email: formData.email, phone: formData.phone }}
+          memberData={{ name: `${formData.first_name} ${formData.last_name}`.trim(), email: formData.email, phone: formData.phone }}
           onNavigate={onNavigate}
           onClose={() => {
             setShowCheckout(false);
@@ -788,9 +791,9 @@ const MemberManagement = ({ onNavigate }) => {
                   onChange={(e) => setFormData({ ...formData, membership_type: e.target.value })}
                   className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  <option value="basic">Basic - ${membershipPricing.basic}/month</option>
-                  <option value="premium">Premium - ${membershipPricing.premium}/month</option>
-                  <option value="vip">VIP - ${membershipPricing.vip}/month</option>
+                  <option value="basic">Basic - ${membershipPricing.basic ?? 0}/month</option>
+                  <option value="premium">Premium - ${membershipPricing.premium ?? 0}/month</option>
+                  <option value="vip">VIP - ${membershipPricing.vip ?? 0}/month</option>
                 </select>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -884,12 +887,12 @@ const MemberManagement = ({ onNavigate }) => {
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getMembershipColor(member.membership_type)}`}>
-                      {member.membership_type.toUpperCase()}
+                      {(member.membership_type || "").toString().toUpperCase()}
                     </span>
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(member.status)}`}>
-                      {member.status.toUpperCase()}
+                      {(member.status || "").toString().toUpperCase()}
                     </span>
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden lg:table-cell">
@@ -928,12 +931,13 @@ const PaymentManagement = ({ onNavigate }) => {
     fetchPayments();
     fetchMembers();
     fetchMembershipPricing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchPayments = async () => {
     try {
       const response = await api.get(`/payments`);
-      setPayments(response.data);
+      setPayments(response?.data || []);
     } catch (error) {
       console.error("Error fetching payments:", error);
     }
@@ -942,7 +946,7 @@ const PaymentManagement = ({ onNavigate }) => {
   const fetchMembers = async () => {
     try {
       const response = await api.get(`/members`);
-      setMembers(response.data);
+      setMembers(response?.data || []);
     } catch (error) {
       console.error("Error fetching members:", error);
     }
@@ -951,7 +955,7 @@ const PaymentManagement = ({ onNavigate }) => {
   const fetchMembershipPricing = async () => {
     try {
       const response = await api.get(`/membership-pricing`);
-      setMembershipPricing(response.data);
+      setMembershipPricing(response?.data || {});
     } catch (error) {
       console.error("Error fetching pricing:", error);
     }
@@ -960,7 +964,8 @@ const PaymentManagement = ({ onNavigate }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const paymentData = { ...formData, amount: membershipPricing[formData.membership_type] };
+      const amt = membershipPricing ? membershipPricing[formData.membership_type] : 0;
+      const paymentData = { ...formData, amount: Number(amt || 0) };
       await api.post(`/payments`, paymentData);
       setFormData({ member_id: "", payment_method: "cash", membership_type: "basic", notes: "" });
       setShowAddForm(false);
@@ -1026,9 +1031,9 @@ const PaymentManagement = ({ onNavigate }) => {
                   onChange={(e) => setFormData({ ...formData, membership_type: e.target.value })}
                   className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  <option value="basic">Basic - ${membershipPricing.basic}</option>
-                  <option value="premium">Premium - ${membershipPricing.premium}</option>
-                  <option value="vip">VIP - ${membershipPricing.vip}</option>
+                  <option value="basic">Basic - ${membershipPricing.basic ?? 0}</option>
+                  <option value="premium">Premium - ${membershipPricing.premium ?? 0}</option>
+                  <option value="vip">VIP - ${membershipPricing.vip ?? 0}</option>
                 </select>
               </div>
               <div>
@@ -1088,21 +1093,23 @@ const PaymentManagement = ({ onNavigate }) => {
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     <div className="truncate max-w-32">{getMemberName(payment.member_id)}</div>
                   </td>
-                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">${payment.amount}</td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    ${Number(payment.amount ?? 0).toFixed(2)}
+                  </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden sm:table-cell">
-                    {payment.payment_method.replace("_", " ").toUpperCase()}
+                    {(payment.payment_method || "").toString().replace("_", " ").toUpperCase()}
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap hidden lg:table-cell">
                     <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                      {payment.membership_type.toUpperCase()}
+                      {(payment.membership_type || "").toString().toUpperCase()}
                     </span>
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(payment.payment_date).toLocaleDateString()}
+                    {payment.payment_date ? new Date(payment.payment_date).toLocaleDateString() : "-"}
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap">
                     <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                      {payment.status.toUpperCase()}
+                      {(payment.status || "").toString().toUpperCase()}
                     </span>
                   </td>
                 </tr>
@@ -1131,12 +1138,13 @@ const Dashboard = ({ onNavigate }) => {
   useEffect(() => {
     fetchDashboardStats();
     fetchProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchDashboardStats = async () => {
     try {
       const response = await api.get(`/dashboard/stats`);
-      setStats(response.data);
+      setStats(response?.data || {});
     } catch (error) {
       console.error("Error fetching dashboard stats:", error);
     }
@@ -1145,7 +1153,7 @@ const Dashboard = ({ onNavigate }) => {
   const fetchProfile = async () => {
     try {
       const response = await api.get(`/profile`);
-      setProfile(response.data);
+      setProfile(response?.data || {});
     } catch (error) {
       console.error("Error fetching profile:", error);
     }
@@ -1168,7 +1176,7 @@ const Dashboard = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* cards ... unchanged */}
+      {/* cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 lg:gap-6">
         {/* Total Members */}
         <div className="bg-white p-4 lg:p-6 rounded-lg shadow-md">
@@ -1180,7 +1188,7 @@ const Dashboard = ({ onNavigate }) => {
             </div>
             <div className="ml-4">
               <p className="text-xs lg:text-sm font-medium text-gray-600">Total Members</p>
-              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.total_members}</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{Number(stats?.total_members ?? 0)}</p>
             </div>
           </div>
         </div>
@@ -1195,7 +1203,7 @@ const Dashboard = ({ onNavigate }) => {
             </div>
             <div className="ml-4">
               <p className="text-xs lg:text-sm font-medium text-gray-600">Active Members</p>
-              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.active_members}</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{Number(stats?.active_members ?? 0)}</p>
             </div>
           </div>
         </div>
@@ -1210,7 +1218,9 @@ const Dashboard = ({ onNavigate }) => {
             </div>
             <div className="ml-4">
               <p className="text-xs lg:text-sm font-medium text-gray-600">Monthly Revenue</p>
-              <p className="text-xl lg:text-2xl font-semibold text-gray-900">${Number(stats?.monthly_revenue ?? 0).toFixed(2)}</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">
+                ${Number(stats?.monthly_revenue ?? 0).toFixed(2)}
+              </p>
             </div>
           </div>
         </div>
@@ -1225,7 +1235,7 @@ const Dashboard = ({ onNavigate }) => {
             </div>
             <div className="ml-4">
               <p className="text-xs lg:text-sm font-medium text-gray-600">Expired</p>
-              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.pending_payments}</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{Number(stats?.pending_payments ?? 0)}</p>
             </div>
           </div>
         </div>
@@ -1240,14 +1250,13 @@ const Dashboard = ({ onNavigate }) => {
             </div>
             <div className="ml-4">
               <p className="text-xs lg:text-sm font-medium text-gray-600">Today's Check-ins</p>
-              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{stats.todays_checkins}</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">{Number(stats?.todays_checkins ?? 0)}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Quick actions + plans (unchanged) */}
-      {/* ... (kept your content exactly) ... */}
+      {/* Quick actions + plans */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Quick Actions */}
         <div className="bg-white p-6 rounded-lg shadow-md">
@@ -1271,7 +1280,6 @@ const Dashboard = ({ onNavigate }) => {
         {/* Membership Plans */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Membership Plans</h3>
-          {/* your original three plan cards */}
           <div className="space-y-4">
             <div className="border border-blue-200 rounded-lg p-4 bg-blue-50">
               <div className="flex justify-between items-center">
@@ -1328,12 +1336,13 @@ const AttendanceManagement = ({ onNavigate }) => {
   useEffect(() => {
     fetchAttendance();
     fetchMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchAttendance = async () => {
     try {
       const response = await api.get(`/attendance`);
-      setAttendance(response.data);
+      setAttendance(response?.data || []);
     } catch (error) {
       console.error("Error fetching attendance:", error);
     }
@@ -1342,7 +1351,7 @@ const AttendanceManagement = ({ onNavigate }) => {
   const fetchMembers = async () => {
     try {
       const response = await api.get(`/members`);
-      setMembers(response.data.filter((member) => member.status === "active"));
+      setMembers((response?.data || []).filter((m) => m.status === "active"));
     } catch (error) {
       console.error("Error fetching members:", error);
     }
@@ -1446,12 +1455,12 @@ const AttendanceManagement = ({ onNavigate }) => {
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     <div className="truncate max-w-32">{getMemberName(record.member_id)}</div>
                   </td>
-                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(record.check_in_time).toLocaleTimeString()}</td>
+                  <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500">{record.check_in_time ? new Date(record.check_in_time).toLocaleTimeString() : "-"}</td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden sm:table-cell">
                     {record.check_out_time ? new Date(record.check_out_time).toLocaleTimeString() : "Still active"}
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-500 hidden lg:table-cell">
-                    {new Date(record.date).toLocaleDateString()}
+                    {record.date ? new Date(record.date).toLocaleDateString() : "-"}
                   </td>
                   <td className="px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
                     {!record.check_out_time && (
@@ -1487,6 +1496,7 @@ function App() {
   ];
 
   const handleLoginSuccess = (tok) => {
+    saveToken(tok);
     setToken(tok);
   };
 
