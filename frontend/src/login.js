@@ -16,7 +16,7 @@ export default function Login({ onSuccess }) {
     e.preventDefault();
     setErr("");
     setLoading(true);
-    try {
+    try {  
       const { data } = await axios.post(`${API}/auth/login`, {
         gym_name: gymName.trim(),
         email: email.trim(),
