@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import "./App.css";
+import Login from "./Login";
 import axios from "axios";
 
 /** =========================
@@ -17,7 +17,19 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+function App() {
+  const token = localStorage.getItem("token");
 
+  // If not logged in, show the Login component (the one with Gym Name)
+  if (!token) {
+    return <Login onSuccess={() => window.location.reload()} />;
+  }
+
+  // Otherwise show your main app (dashboard etc.)
+  return (
+    // ... your existing dashboard/app shell code
+  );
+}
 
 /** =========================
  *  Small Auth helpers
