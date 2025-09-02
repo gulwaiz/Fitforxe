@@ -17,19 +17,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-function App() {
-  const token = localStorage.getItem("token");
 
-  // If not logged in, show the Login component (the one with Gym Name)
-  if (!token) {
-    return <Login onSuccess={() => window.location.reload()} />;
-  }
-
-  // Otherwise show your main app (dashboard etc.)
-  return (
-    // ... your existing dashboard/app shell code
-  );
-}
 
 /** =========================
  *  Small Auth helpers
@@ -44,72 +32,7 @@ function getToken() {
   return localStorage.getItem("token");
 }
 
-/** =========================
- *  Login screen
- *  ========================= */
-function Login({ onSuccess }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
 
-  const submit = async (e) => {
-    e.preventDefault();
-    setErr("");
-    setLoading(true);
-    try {
-      // backend expects x-www-form-urlencoded with fields: username, password
-      const body = new URLSearchParams();
-      body.set("username", email);
-      body.set("password", password);
-
-      const res = await axios.post(`${API_BASE}/auth/login`, body, {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      });
-
-      const tok = res.data?.access_token;
-      if (!tok) throw new Error("No token");
-      saveToken(tok);
-      onSuccess(tok);
-    } catch (e) {
-      setErr("Incorrect email or password");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
-      <form onSubmit={submit} className="bg-white p-6 rounded-lg shadow w-full max-w-sm space-y-4">
-        <h1 className="text-2xl font-bold">Sign in to Fitforxe</h1>
-        {err && <div className="text-red-600 text-sm">{err}</div>}
-        <input
-          type="email"
-          placeholder="Email"
-          className="w-full p-3 border rounded"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          className="w-full p-3 border rounded"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 rounded hover:bg-blue-700"
-        >
-          {loading ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
-    </div>
-  );
-}
 
 /** =========================
  *  Checkout Page Component
