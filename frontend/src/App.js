@@ -522,7 +522,7 @@ const ProfileManagement = ({ onNavigate }) => {
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Gym Information</h3>
                 <div className="space-y-2">
                   <p>
-                    <span className="font-medium">Gym Name:</span> {profile.gym_name}
+                    <span className="font-medium">Gym Name:</span> {profile?.gym_name || "FitForce"}
                   </p>
                   <p>
                     <span className="font-medium">Owner:</span> {profile.owner_name}
@@ -1210,7 +1210,7 @@ const Dashboard = ({ onNavigate }) => {
             </div>
             <div className="ml-4">
               <p className="text-xs lg:text-sm font-medium text-gray-600">Monthly Revenue</p>
-              <p className="text-xl lg:text-2xl font-semibold text-gray-900">${stats.monthly_revenue.toFixed(2)}</p>
+              <p className="text-xl lg:text-2xl font-semibold text-gray-900">${Number(stats?.monthly_revenue ?? 0).toFixed(2)}</p>
             </div>
           </div>
         </div>
