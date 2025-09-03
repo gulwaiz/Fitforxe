@@ -12,25 +12,37 @@ export default function Login({ onSuccess }) {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const toMessage = (e) => {
+    // normalize ANY error to a readable string
+    const msg =
+      e?.response?.data?.detail ??
+      e?.response?.data?.message ??
+      e?.message ??
+      e ??
+      "Incorrect gym name, email, or password";
+    return typeof msg === "string" ? msg : JSON.stringify(msg);
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
     setLoading(true);
-    try {  
+    try {
+      // Your FastAPI login (server.py) expects JSON: { gym_name, email, password }
       const { data } = await axios.post(`${API}/auth/login`, {
-        gym_name: gymName.trim(),
+        gym_name: gymName.trim(),   // keep if your backend requires it
         email: email.trim(),
         password,
       });
 
-      // Save token & gym for later requests
+      // Save token for subsequent requests
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("gym_name", gymName.trim());
       axios.defaults.headers.common.Authorization = `Bearer ${data.access_token}`;
 
-      onSuccess(); // notify App we’re logged in
+      onSuccess?.(); // tell App we’re logged in
     } catch (e) {
-      setErr(e?.response?.data?.detail || "Incorrect gym name, email, or password");
+      setErr(toMessage(e));  // <-- CRITICAL: always a string
     } finally {
       setLoading(false);
     }
@@ -62,11 +74,12 @@ export default function Login({ onSuccess }) {
         </h2>
 
         <form onSubmit={submit} style={{ display: "grid", gap: 12 }}>
+          {/* If your backend does NOT need gym_name, you can remove this input */}
           <input
             placeholder="Gym Name"
             value={gymName}
             onChange={(e) => setGymName(e.target.value)}
-            required
+            autoCapitalize="none"
             style={inputStyle}
           />
           <input
@@ -75,6 +88,7 @@ export default function Login({ onSuccess }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            autoCapitalize="none"
             style={inputStyle}
           />
           <input
@@ -103,9 +117,9 @@ export default function Login({ onSuccess }) {
             {loading ? "Signing in..." : "Sign in"}
           </button>
 
-          {err && (
-            <div style={{ color: "#b91c1c", fontSize: 14, textAlign: "center" }}>
-              {err}
+          {!!err && (
+            <div style={{ color: "#b91c1c", fontSize: 14, textAlign: "center", wordBreak: "break-word" }}>
+              {String(err)}
             </div>
           )}
         </form>
