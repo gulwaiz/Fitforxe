@@ -13,7 +13,6 @@ export default function Login({ onSuccess }) {
   const [loading, setLoading] = useState(false);
 
   const toMessage = (e) => {
-    // normalize ANY error to a readable string
     const msg =
       e?.response?.data?.detail ??
       e?.response?.data?.message ??
@@ -28,21 +27,25 @@ export default function Login({ onSuccess }) {
     setErr("");
     setLoading(true);
     try {
-      // Your FastAPI login (server.py) expects JSON: { gym_name, email, password }
-      const { data } = await axios.post(`${API}/auth/login`, {
-        gym_name: gymName.trim(),   // keep if your backend requires it
-        email: email.trim(),
-        password,
+      // ✅ FIXED: Send data in form-encoded format
+      const params = new URLSearchParams();
+      params.append("username", email.trim());
+      params.append("password", password);
+      params.append("scope", gymName.trim());
+
+      const { data } = await axios.post(`${API}/auth/login`, params, {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
       });
 
-      // Save token for subsequent requests
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("gym_name", gymName.trim());
       axios.defaults.headers.common.Authorization = `Bearer ${data.access_token}`;
 
-      onSuccess?.(); // tell App we’re logged in
+      onSuccess?.();
     } catch (e) {
-      setErr(toMessage(e));  // <-- CRITICAL: always a string
+      setErr(toMessage(e));
     } finally {
       setLoading(false);
     }
@@ -74,7 +77,6 @@ export default function Login({ onSuccess }) {
         </h2>
 
         <form onSubmit={submit} style={{ display: "grid", gap: 12 }}>
-          {/* If your backend does NOT need gym_name, you can remove this input */}
           <input
             placeholder="Gym Name"
             value={gymName}
@@ -118,7 +120,14 @@ export default function Login({ onSuccess }) {
           </button>
 
           {!!err && (
-            <div style={{ color: "#b91c1c", fontSize: 14, textAlign: "center", wordBreak: "break-word" }}>
+            <div
+              style={{
+                color: "#b91c1c",
+                fontSize: 14,
+                textAlign: "center",
+                wordBreak: "break-word",
+              }}
+            >
               {String(err)}
             </div>
           )}
