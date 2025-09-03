@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import Login from "./Login";
 import axios from "axios";
+import Dashboard from "./Dashboard";
 
 /** =========================
  *  API base + axios instance
@@ -16,6 +17,31 @@ api.interceptors.request.use((config) => {
   if (t) config.headers.Authorization = `Bearer ${t}`;
   return config;
 });
+
+function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    setIsLoggedIn(!!token);
+  }, []);
+
+  const handleLoginSuccess = () => {
+    setIsLoggedIn(true);
+  };
+
+  if (!isLoggedIn) {
+    return <Login onSuccess={handleLoginSuccess} />;
+  }
+
+  return (
+    <>
+      {/* You can put routing here later */}
+      <Dashboard />
+    </>
+  );
+}
+
 
 /** =========================
  *  Small Auth helpers
