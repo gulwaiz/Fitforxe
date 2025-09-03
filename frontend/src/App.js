@@ -1,7 +1,7 @@
+// src/App.js
 import React, { useState, useEffect } from "react";
 import Login from "./Login";
 import axios from "axios";
-import Dashboard from "./Dashboard";
 
 /** =========================
  *  API base + axios instance
@@ -18,35 +18,11 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    setIsLoggedIn(!!token);
-  }, []);
-
-  const handleLoginSuccess = () => {
-    setIsLoggedIn(true);
-  };
-
-  if (!isLoggedIn) {
-    return <Login onSuccess={handleLoginSuccess} />;
-  }
-
-  return (
-    <>
-      {/* You can put routing here later */}
-      <Dashboard />
-    </>
-  );
-}
-
-
 /** =========================
  *  Small Auth helpers
  *  ========================= */
 function saveToken(tok) {
+  if (!tok) return; // <-- protect against undefined
   localStorage.setItem("token", tok);
 }
 function clearToken() {
@@ -1514,6 +1490,15 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [token, setToken] = useState(getToken());
 
+  // keep axios auth header in sync with state
+  useEffect(() => {
+    if (token) {
+      api.defaults.headers.common.Authorization = `Bearer ${token}`;
+    } else {
+      delete api.defaults.headers.common.Authorization;
+    }
+  }, [token]);
+
   const navigation = [
     { id: "dashboard", name: "Dashboard", icon: "🏠" },
     { id: "members", name: "Members", icon: "👥" },
@@ -1521,9 +1506,14 @@ function App() {
     { id: "attendance", name: "Attendance", icon: "📋" },
   ];
 
+  // Accept onSuccess() with or without token
   const handleLoginSuccess = (tok) => {
-    saveToken(tok);
-    setToken(tok);
+    const t = tok || getToken();     // <-- robust: supports both patterns
+    if (t) {
+      // only save if explicitly provided
+      if (tok) saveToken(tok);
+      setToken(t);
+    }
   };
 
   const handleLogout = () => {
