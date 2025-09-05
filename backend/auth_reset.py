@@ -10,7 +10,7 @@ from deps import get_db  # <-- change to your real path (e.g., from .db import g
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-SECRET_KEY = os.getenv("SECRET_KEY", "replace-me")
+SECRET_KEY = os.getenv("SECRET_KEY", "zF6x9XkP2uC7qE1rG0vW5yN8bJ4hS3mT7dK9aR2eQ6pU0nV5cL8zD1fH3tW9xR7")
 ALGORITHM = "HS256"
 RESET_TOKEN_MINUTES = 30
 
