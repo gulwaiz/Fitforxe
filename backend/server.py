@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from enum import Enum
+from auth_reset import router as reset_router  # same folder import
 import uuid
 import os
 import logging
@@ -690,6 +691,7 @@ async def detect_country(request: Request):
 
 # -------------------- Register router ------------
 app.include_router(api)
+app.include_router(reset_router)
 
 # -------------------- Shutdown -------------------
 @app.on_event("shutdown")
