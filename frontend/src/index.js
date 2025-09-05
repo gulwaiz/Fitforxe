@@ -1,8 +1,12 @@
+// src/index.js
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "./index.css";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
+import ForgotPassword from "./ForgotPassword";
+import ResetPassword from "./ResetPassword";
 
 const container = document.getElementById("root");
 if (!container) {
@@ -13,7 +17,13 @@ const root = createRoot(container);
 
 const Root = () => (
   <ErrorBoundary>
-    <App />
+    <BrowserRouter>
+      <Routes>
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/*" element={<App />} />
+      </Routes>
+    </BrowserRouter>
   </ErrorBoundary>
 );
 
