@@ -6,7 +6,6 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from bson import ObjectId
 
-# 👇 import your Mongo dependency exactly as you do elsewhere
 from deps import get_db  # <-- change to your real path (e.g., from .db import get_db)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
