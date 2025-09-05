@@ -119,6 +119,10 @@ export default function Login({ onSuccess }) {
             {loading ? "Signing in..." : "Sign in"}
           </button>
 
+<p style={{textAlign:"center", marginTop:8}}>
+  <a href="/forgot-password">Forgot password?</a>
+</p>
+
           {!!err && (
             <div
               style={{
