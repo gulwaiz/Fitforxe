@@ -691,7 +691,7 @@ async def detect_country(request: Request):
 
 # -------------------- Register router ------------
 app.include_router(api)
-app.include_router(reset_router)
+app.include_router(reset_router, prefix="/api")
 
 # -------------------- Shutdown -------------------
 @app.on_event("shutdown")
