@@ -1,109 +1,115 @@
-import os
-from datetime import datetime, timedelta
+# backend/auth_reset.py
+import os, secrets, hashlib
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from bson import ObjectId
 
-# If deps.py sits next to this file, this is correct:
-from deps import get_db  # <-- adjust only if your path differs
+# If deps.py is in the SAME folder as this file, this absolute import is correct:
+from deps import get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# -----------------------------
-# Config
-# -----------------------------
-SECRET_KEY = os.getenv("SECRET_KEY", "replace-me")  # <-- set a real secret in Render env
+SECRET_KEY = os.getenv("SECRET_KEY")           # set in Render → Environment
 ALGORITHM = "HS256"
-RESET_TOKEN_MINUTES = 30
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-
+RESET_TOKEN_MINUTES = 20
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# -----------------------------
-# Models
-# -----------------------------
 class RequestResetIn(BaseModel):
-    email: EmailStr
     gym_name: str
+    email: EmailStr
 
 class DoResetIn(BaseModel):
     token: str
     new_password: str
 
-# -----------------------------
-# Token helpers
-# -----------------------------
-def create_reset_token(owner_id: str) -> str:
+def _now():
+    return datetime.now(timezone.utc)
+
+def _new_jti():
+    return secrets.token_urlsafe(24)
+
+async def _save_reset_record(db, owner_id: str, jti: str, expires_at: datetime):
+    await db.password_resets.insert_one({
+        "owner_id": ObjectId(owner_id),
+        "jti": jti,
+        "expires_at": expires_at,
+        "used": False,
+        "created_at": _now(),
+    })
+
+async def _mark_used(db, jti: str):
+    await db.password_resets.update_one(
+        {"jti": jti, "used": False}, {"$set": {"used": True, "used_at": _now()}}
+    )
+
+async def _is_valid_jti(db, jti: str) -> bool:
+    rec = await db.password_resets.find_one({"jti": jti, "used": False})
+    return bool(rec and rec["expires_at"] > _now())
+
+def create_reset_token(owner_id: str, jti: str) -> str:
     payload = {
         "sub": str(owner_id),
+        "jti": jti,
         "typ": "pwd_reset",
-        "exp": datetime.utcnow() + timedelta(minutes=RESET_TOKEN_MINUTES),
+        "exp": _now() + timedelta(minutes=RESET_TOKEN_MINUTES),
+        "iat": _now(),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-def decode_reset_token(token: str) -> str:
+def decode_reset_token(token: str):
     try:
         data = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if data.get("typ") != "pwd_reset":
-            raise HTTPException(status_code=400, detail="Invalid token type")
-        return data["sub"]
+            raise HTTPException(400, "Invalid token type")
+        return data
     except JWTError:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
-
-# -----------------------------
-# Endpoints
-# -----------------------------
-async def _request_reset_impl(body: RequestResetIn, db):
-    # Normalize inputs
-    email = body.email.lower().strip()
-    gym = body.gym_name.strip()
-
-    owner = await db.gym_owners.find_one({"email": email, "gym_name": gym})
-
-    # Always 200 to avoid account enumeration
-    if owner:
-        token = create_reset_token(owner["_id"])
-        reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
-
-        # TODO: send the email here.
-        # For now we just return the link so you can test quickly.
-        # (Once you add an email provider, remove reset_url from the response.)
-        return {"ok": True, "reset_url": reset_url}
-
-    return {"ok": True}
+        raise HTTPException(400, "Invalid or expired token")
 
 @router.post("/request-reset")
 async def request_reset(body: RequestResetIn, db=Depends(get_db)):
-    return await _request_reset_impl(body, db)
+    owner = await db.gym_owners.find_one({
+        "email": body.email.lower().strip(),
+        "gym_name": body.gym_name.strip(),
+    })
 
-# Alias to match your frontend call /api/auth/forgot-password
-@router.post("/forgot-password")
-async def forgot_password(body: RequestResetIn, db=Depends(get_db)):
-    return await _request_reset_impl(body, db)
+    # Always return 200 (don’t leak whether an account exists)
+    if owner:
+        jti = _new_jti()
+        expires_at = _now() + timedelta(minutes=RESET_TOKEN_MINUTES)
+        await _save_reset_record(db, owner["_id"], jti, expires_at)
 
-async def _perform_reset_impl(body: DoResetIn, db):
-    owner_id = decode_reset_token(body.token)
-    result = await db.gym_owners.update_one(
-        {"_id": ObjectId(owner_id)},
-        {
-            "$set": {
-                "password_hash": pwd.hash(body.new_password),
-                "password_changed_at": datetime.utcnow(),
-            }
-        },
-    )
-    if result.modified_count == 0:
-        # Either the same password hash or user not found
-        raise HTTPException(status_code=400, detail="Could not reset password")
+        token = create_reset_token(str(owner["_id"]), jti)
+        frontend = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        link = f"{frontend}/reset-password?token={token}"
+
+        # DEV HELPER: echo link in response when enabled
+        if os.getenv("SHOW_RESET_URL_IN_RESPONSE", "false").lower() == "true":
+            return {"ok": True, "reset_url": link}
+
+        # TODO: send email via provider (see emailer.py)
+        print("[DEV] Reset URL:", link)
+
     return {"ok": True}
 
 @router.post("/reset")
 async def perform_reset(body: DoResetIn, db=Depends(get_db)):
-    return await _perform_reset_impl(body, db)
+    data = decode_reset_token(body.token)
+    owner_id = data["sub"]
+    jti = data["jti"]
 
-# Alias so /api/auth/reset-password also works
-@router.post("/reset-password")
-async def perform_reset_alias(body: DoResetIn, db=Depends(get_db)):
-    return await _perform_reset_impl(body, db)
+    if not await _is_valid_jti(db, jti):
+        raise HTTPException(400, "This reset link is no longer valid")
+
+    res = await db.gym_owners.update_one(
+        {"_id": ObjectId(owner_id)},
+        {"$set": {"password_hash": pwd.hash(body.new_password),
+                  "password_changed_at": _now()}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(400, "Account not found")
+
+    await _mark_used(db, jti)
+    return {"ok": True}
